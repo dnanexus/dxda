@@ -227,7 +227,7 @@ func CreateManifestDB(fname string) {
 				check(err)
 				nfiles++
 				if nfiles%100 == 0 {
-					fmt.Printf("Processed %d files\n", method)
+					fmt.Printf("Processed %d files\n", nfiles)
 				}
 
 			}
