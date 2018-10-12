@@ -31,6 +31,7 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
+		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
 		dxda.CreateManifestDB(fname)
 	}
 	dxda.DownloadManifestDB(fname, token, opts)

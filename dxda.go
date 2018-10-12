@@ -311,8 +311,11 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 // DownloadManifestDB ...
 func DownloadManifestDB(fname, token string, opts Opts) {
 	m := ReadManifest(fname)
+	fmt.Printf("Preparing files for download\n")
 	urls := PrepareFilesForDownload(m, token)
 	statsFname := fname + ".stats.db"
+
+	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
