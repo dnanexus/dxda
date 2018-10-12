@@ -214,6 +214,7 @@ func CreateManifestDB(fname string) {
 	check(err)
 
 	// TODO: May want to convert this to a bulk load?
+	nfiles := 0
 	for proj, files := range m {
 		for _, f := range files {
 			for pID := range f.Parts {
@@ -224,6 +225,11 @@ func CreateManifestDB(fname string) {
 					f.ID, proj, f.Name, f.Folder, pID, f.Parts[pID].MD5, f.Parts[pID].Size, f.Parts["1"].Size, 0)
 				_, err = db.Exec(sqlStmt)
 				check(err)
+				nfiles++
+				if nfiles%100 == 0 {
+					fmt.Printf("Processed %d files\n", method)
+				}
+
 			}
 		}
 	}
