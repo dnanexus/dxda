@@ -13,8 +13,12 @@ def fileID2manifest(fdetails, project):
     """
     if not fdetails:
         raise "Describe output for a file is None"
-    fdetails['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size"} for pid, pdetails in fdetails['parts'].items()}
-    return fdetails
+    pruned = {}
+    pruned['id'] = fdetails['id']
+    pruned['name'] = fdetails['name']
+    pruned['folder'] = fdetails['folder']
+    pruned['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size"} for pid, pdetails in fdetails['parts'].items()}
+    return pruned
 
 def chunks(l, n):
     """Yield successive n-sized chunks from l."""
