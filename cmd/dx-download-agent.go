@@ -7,7 +7,7 @@ import (
 	"os"
 
 	// The dxda package should contain all core functionality
-	"github.com/geetduggal/dxda"
+	"github.com/dnanexus/dxda"
 	"github.com/google/subcommands"
 )
 
