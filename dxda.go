@@ -215,6 +215,8 @@ func CreateManifestDB(fname string) {
 
 	// TODO: May want to convert this to a bulk load?
 	nfiles := 0
+	_, err = db.Exec("BEGIN TRANSACTION")
+	check(err)
 	for proj, files := range m {
 		for _, f := range files {
 			for pID := range f.Parts {
@@ -233,6 +235,8 @@ func CreateManifestDB(fname string) {
 			}
 		}
 	}
+	_, err = db.Exec("END TRANSACTION")
+	check(err)
 }
 
 // PrepareFilesForDownload ...
