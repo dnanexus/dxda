@@ -109,7 +109,7 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 	for header, value := range headers {
 		req.Header.Set(header, value)
 	}
-
+	fmt.Printf("%s\n", req)
 	resp, err := client.Do(req)
 	check(err)
 	defer resp.Body.Close()
@@ -307,7 +307,6 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 			j.urls[j.part.FileID] = u
 			mutex.Unlock()
 		}
-		fmt.Printf("%s, %d, %d, %s\n", j.manifestFileName, j.part, j.wg, j.urls)
 		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls)
 		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
