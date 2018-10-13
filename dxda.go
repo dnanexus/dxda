@@ -310,7 +310,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 			j.urls[j.part.FileID] = u
 			mutex.Unlock()
 		}
-		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls)
+		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls, mutex)
 		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
 	wg.Done()
@@ -377,7 +377,7 @@ func UpdateDBPart(manifestFileName string, p DBPart) {
 }
 
 // DownloadDBPart ...
-func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL) {
+func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
 	check(err)
@@ -396,5 +396,7 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	_, err = localf.Write(body)
 	check(err)
 	localf.Close()
+	mutex.Lock()
 	UpdateDBPart(manifestFileName, p)
+	mutex.Unlock()
 }
