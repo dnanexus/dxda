@@ -267,6 +267,7 @@ type JobInfo struct {
 func queryDBIntegerResult(query, dbFname string) int {
 	db, err := sql.Open("sqlite3", dbFname)
 	check(err)
+	defer db.Close()
 
 	rows, err := db.Query(query)
 	check(err)
