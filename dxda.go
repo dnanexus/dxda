@@ -365,7 +365,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 
 // UpdateDBPart ...
 func UpdateDBPart(manifestFileName string, p DBPart) {
-	statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
+	statsFname := "file:" + manifestFileName + ".stats.db?cache=shared"
 	// statsFname := manifestFileName + ".stats.db"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
