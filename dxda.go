@@ -265,7 +265,9 @@ type JobInfo struct {
 
 // Probably a better way to do this :)
 func queryDBIntegerResult(query, dbFname string) int {
-	db, err := sql.Open("sqlite3", dbFname)
+	statsFname := "file:" + dbFname + "?cache=shared&mode=rwc"
+
+	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
 
@@ -359,7 +361,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 
 // UpdateDBPart ...
 func UpdateDBPart(manifestFileName string, p DBPart) {
-	statsFname := manifestFileName + ".stats.db?cache=shared&mode=rwc"
+	statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
