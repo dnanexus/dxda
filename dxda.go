@@ -191,7 +191,7 @@ type DBPart struct {
 // CreateManifestDB ...
 func CreateManifestDB(fname string) {
 	m := ReadManifest(fname)
-	statsFname := fname + ".stats.db"
+	statsFname := fname + ".stats.db?cache=shared&mode=rwc"
 	os.Remove(statsFname)
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
