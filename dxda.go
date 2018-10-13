@@ -129,7 +129,7 @@ func DXAPI(token, api string, payload string) (status string, body []byte) {
 		"Authorization": fmt.Sprintf("Bearer %s", token),
 		"Content-Type":  "application/json",
 	}
-	url := fmt.Sprintf("https://api.dnanexus.com/%s", api)
+	url := fmt.Sprintf("https://stagingapi.dnanexus.com/%s", api)
 	return makeRequestWithHeadersFail("POST", url, headers, []byte(payload))
 }
 
