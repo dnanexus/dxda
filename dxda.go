@@ -307,7 +307,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 			j.urls[j.part.FileID] = u
 			mutex.Unlock()
 		}
-		fmt.Printf("%s, %d, %d, %s", j.manifestFileName, j.part, j.wg, j.urls)
+		fmt.Printf("%s, %d, %d, %s\n", j.manifestFileName, j.part, j.wg, j.urls)
 		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls)
 		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
