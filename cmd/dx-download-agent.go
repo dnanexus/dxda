@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sync"
 
 	// The dxda package should contain all core functionality
 	"github.com/dnanexus/dxda"
@@ -52,8 +51,7 @@ func (p *progressCmd) SetFlags(f *flag.FlagSet) {
 }
 func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	fname := f.Args()[0]
-	var mutex = &sync.Mutex{}
-	fmt.Println(dxda.DownloadProgress(fname, mutex))
+	fmt.Println(dxda.DownloadProgress(fname))
 	return subcommands.ExitSuccess
 }
 

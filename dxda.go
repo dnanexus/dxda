@@ -265,7 +265,7 @@ type JobInfo struct {
 
 // Probably a better way to do this :)
 func queryDBIntegerResult(query, dbFname string) int {
-	statsFname := dbFname + "?_busy_timeout=5000"
+	statsFname := dbFname + "_busy_timeout=5000&cache=shared&mode=r"
 
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -284,16 +284,16 @@ func queryDBIntegerResult(query, dbFname string) int {
 func b2MB(bytes int) int { return bytes / 1000000 }
 
 // DownloadProgress ...
-func DownloadProgress(fname string, mutex *sync.Mutex) string {
+func DownloadProgress(fname string) string {
 	// TODO: memoize totals so DB is not re-queried
-	mutex.Lock()
+
 	dbFname := fname + ".stats.db"
 	numPartsComplete := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
 	numParts := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats", dbFname)
 
 	numBytesComplete := queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
 	numBytes := queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats", dbFname)
-	mutex.Unlock()
+
 	return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
 }
 
@@ -311,7 +311,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 			mutex.Unlock()
 		}
 		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls, mutex)
-		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName, mutex))
+		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
 	wg.Done()
 }
@@ -363,7 +363,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 // UpdateDBPart ...
 func UpdateDBPart(manifestFileName string, p DBPart) {
 	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
-	statsFname := manifestFileName + ".stats.db?_busy_timeout=5000"
+	statsFname := manifestFileName + ".stats.db?_busy_timeout=5000&cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
