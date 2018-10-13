@@ -383,7 +383,9 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	check(err)
 	headers := make(map[string]string)
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1)
+	mutex.Lock()
 	u := urls[p.FileID]
+	mutex.Unlock()
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
