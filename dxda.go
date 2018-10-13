@@ -13,6 +13,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -213,8 +214,6 @@ func CreateManifestDB(fname string) {
 	_, err = db.Exec(sqlStmt)
 	check(err)
 
-	// TODO: May want to convert this to a bulk load?
-	nfiles := 0
 	_, err = db.Exec("BEGIN TRANSACTION")
 	check(err)
 	for proj, files := range m {
@@ -227,11 +226,6 @@ func CreateManifestDB(fname string) {
 					f.ID, proj, f.Name, f.Folder, pID, f.Parts[pID].MD5, f.Parts[pID].Size, f.Parts["1"].Size, 0)
 				_, err = db.Exec(sqlStmt)
 				check(err)
-				nfiles++
-				if nfiles%100 == 0 {
-					fmt.Printf("Processed %d files\n", nfiles)
-				}
-
 			}
 		}
 	}
@@ -247,9 +241,10 @@ func PrepareFilesForDownload(m Manifest, token string) map[string]DXDownloadURL 
 		for _, f := range files {
 
 			// Create directory structure and initialize file if it doesn't exist
-			fname := fmt.Sprintf(".%s/%s", f.Folder, f.Name)
+			folder := path.Join("./", f.Folder)
+			fname := path.Join(folder, f.Name)
 			if _, err := os.Stat(fname); os.IsNotExist(err) {
-				err := os.MkdirAll(f.Folder, 0777)
+				err := os.MkdirAll(folder, 0777)
 				check(err)
 				localf, err := os.Create(fname)
 				check(err)
