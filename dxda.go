@@ -370,12 +370,13 @@ func UpdateDBPart(manifestFileName string, p DBPart) {
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
-	_, err = db.Exec("BEGIN TRANSACTION")
+	tx, err := db.Begin()
 	check(err)
-	_, err = db.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = %d WHERE file_id = '%s' AND part_id = '%d'", p.Size, p.FileID, p.PartID))
+	defer tx.Commit()
+
+	_, err = tx.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = %d WHERE file_id = '%s' AND part_id = '%d'", p.Size, p.FileID, p.PartID))
 	check(err)
-	_, err = db.Exec("END TRANSACTION")
-	check(err)
+
 }
 
 // DownloadDBPart ...
