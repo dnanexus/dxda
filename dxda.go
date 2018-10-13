@@ -109,7 +109,6 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 	for header, value := range headers {
 		req.Header.Set(header, value)
 	}
-	fmt.Printf("%s\n", req)
 	resp, err := client.Do(req)
 	check(err)
 	defer resp.Body.Close()
