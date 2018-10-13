@@ -270,6 +270,8 @@ func queryDBIntegerResult(query, dbFname string) int {
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
+	_, err = db.Exec("BEGIN TRANSACTION")
+	check(err)
 
 	rows, err := db.Query(query)
 	check(err)
@@ -277,6 +279,8 @@ func queryDBIntegerResult(query, dbFname string) int {
 	rows.Next()
 	rows.Scan(&cnt)
 	rows.Close()
+	_, err = db.Exec("END TRANSACTION")
+	check(err)
 	return cnt
 }
 
@@ -366,8 +370,11 @@ func UpdateDBPart(manifestFileName string, p DBPart) {
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
+	_, err = db.Exec("BEGIN TRANSACTION")
 	check(err)
 	_, err = db.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = %d WHERE file_id = '%s' AND part_id = '%d'", p.Size, p.FileID, p.PartID))
+	check(err)
+	_, err = db.Exec("END TRANSACTION")
 	check(err)
 }
 
