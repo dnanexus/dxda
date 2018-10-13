@@ -265,7 +265,7 @@ type JobInfo struct {
 
 // Probably a better way to do this :)
 func queryDBIntegerResult(query, dbFname string) int {
-	statsFname := dbFname + "_busy_timeout=5000&cache=shared&mode=rc"
+	statsFname := dbFname + "?_busy_timeout=5000&cache=shared&mode=rc"
 
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
