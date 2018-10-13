@@ -373,10 +373,8 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
 	check(err)
-	headers := map[string]string{
-		// TODO modify ranges for for last part for ostensible correctness (works regardless in practice)
-		"Range": fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1),
-	}
+	headers := make(map[string]string)
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1)
 	u := urls[p.FileID]
 	for k, v := range u.Headers {
 		headers[k] = v
