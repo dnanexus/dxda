@@ -192,8 +192,6 @@ type DBPart struct {
 func CreateManifestDB(fname string) {
 	m := ReadManifest(fname)
 	statsFname := fname + ".stats.db"
-	statsFname = "file:" + statsFname + "?cache=shared&mode=rwc"
-
 	os.Remove(statsFname)
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -267,7 +265,7 @@ type JobInfo struct {
 
 // Probably a better way to do this :)
 func queryDBIntegerResult(query, dbFname string) int {
-	statsFname := "file:" + dbFname + "?cache=shared&mode=rwc"
+	statsFname := dbFname
 
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -324,7 +322,6 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	fmt.Printf("Preparing files for download\n")
 	urls := PrepareFilesForDownload(m, token)
 	statsFname := fname + ".stats.db"
-	statsFname = "file:" + statsFname + "?cache=shared&mode=rwc"
 
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 
@@ -365,8 +362,8 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 
 // UpdateDBPart ...
 func UpdateDBPart(manifestFileName string, p DBPart) {
-	statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
-	// statsFname := manifestFileName + ".stats.db"
+	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
+	statsFname := manifestFileName + ".stats.db"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
