@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"compress/bzip2"
 	"crypto/md5"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -95,13 +98,55 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 	const maxRetryCount = 10
 	const userAgent = "DNAnexus Download Agent (v. 0.1)"
 
-	client := &retryablehttp.Client{
-		HTTPClient:   cleanhttp.DefaultClient(),
-		Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-		RetryWaitMin: minRetryTime * time.Second,
-		RetryWaitMax: maxRetryTime * time.Second,
-		RetryMax:     maxRetryCount,
-		CheckRetry:   retryablehttp.DefaultRetryPolicy,
+	var client *retryablehttp.Client
+	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
+	if localCertFile == "" {
+		client = &retryablehttp.Client{
+			HTTPClient:   cleanhttp.DefaultClient(),
+			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
+			RetryWaitMin: minRetryTime * time.Second,
+			RetryWaitMax: maxRetryTime * time.Second,
+			RetryMax:     maxRetryCount,
+			CheckRetry:   retryablehttp.DefaultRetryPolicy,
+		}
+	} else {
+		insecure := false
+		if os.Getenv("DX_TLS_SKIP_VERIFY") == "true" {
+			insecure = true
+		}
+
+		// Get the SystemCertPool, continue with an empty pool on error
+		rootCAs, _ := x509.SystemCertPool()
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+
+		// Read in the cert file
+		certs, err := ioutil.ReadFile(localCertFile)
+		check(err)
+
+		// Append our cert to the system pool
+		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
+			fmt.Println("No certs appended, using system certs only")
+		}
+
+		// Trust the augmented cert pool in our client
+		config := &tls.Config{
+			InsecureSkipVerify: insecure,
+			RootCAs:            rootCAs,
+		}
+
+		tr := cleanhttp.DefaultTransport()
+		tr.TLSClientConfig = config
+
+		client = &retryablehttp.Client{
+			HTTPClient:   &http.Client{Transport: tr},
+			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
+			RetryWaitMin: minRetryTime * time.Second,
+			RetryWaitMax: maxRetryTime * time.Second,
+			RetryMax:     maxRetryCount,
+			CheckRetry:   retryablehttp.DefaultRetryPolicy,
+		}
 	}
 
 	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
