@@ -35,7 +35,7 @@ export DX_API_TOKEN=<INSERT API TOKEN HERE>
 
 If no API token is provided, the download agent will look to the `~/.dnanexus_config/environment.json` also used by the [dx-toolkit](https://github.com/dnanexus/dx-toolkit),
 
-In the same directory, you can probe your environment for download readiness with this command:
+<!-- In the same directory, you can probe your environment for download readiness with this command:
 
 ```
 dx-download-agent inspect exome_bams_manifest.json.bz2
@@ -46,7 +46,7 @@ This command will perfrom a series of initial checks but avoid downloads.  These
 * Network connectivity and potential issues with it
 * Whether you have enough space locally
 * Approximate speeds of download rates
-* Whether it looks like another download process is running (i.e. file sizes are changing, status files being updated).
+* Whether it looks like another download process is running (i.e. file sizes are changing, status files being updated). -->
 
 To start the download:
 
