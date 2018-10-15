@@ -117,5 +117,5 @@ will create manifest files containing each containing 100 files per project.  Fo
 ## Additional notes
 
 * Only objects of [class File](https://wiki.dnanexus.com/API-Specification-v1.0.0/Introduction-to-Data-Object-Classes) can be downloaded. 
-* On DNAnexus, files are immutable and the same directory can contain multiple files of the same name.  If this occurs, files on a local POSIX filesystem will be appended with the DNAnexus file ID to ensure they are not overwritten.  
-* In the case a directory and a file have the same name and share the same parent directory, a DNAnexus file ID will also be appended.  If the file name contains at least one character that is illegal on a POSIX system, the file will be named directly by its file ID on DNAnexus.
+<!-- * On DNAnexus, files are immutable and the same directory can contain multiple files of the same name.  If this occurs, files on a local POSIX filesystem will be appended with the DNAnexus file ID to ensure they are not overwritten.  
+* In the case a directory and a file have the same name and share the same parent directory, a DNAnexus file ID will also be appended.  If the file name contains at least one character that is illegal on a POSIX system, the file will be named directly by its file ID on DNAnexus. -->
