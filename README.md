@@ -127,7 +127,8 @@ will create manifest files containing each containing 100 files per project.  Fo
 To execute `dx-download-agent` via its docker image, simply replace calls to `dx-download-agent ARGS` with `docker run dnanexus/dxda ARGS`.  Note that you will need to mount your local files and set appropriate environment variables to execute.  For example:
 
 ```
-docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda download -max_threads=20 gvcfs.manifest.json.bz2```
+docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda download -max_threads=20 gvcfs.manifest.json.bz2
+```
 
 
 ## Additional notes
