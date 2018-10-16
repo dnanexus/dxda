@@ -103,7 +103,7 @@ Fields (all fields are strings unless otherwise specified)
 
 It is up to the implementation to decide whether or not `bytes_fetched` is updated in a more coarse- vs. fine-grained fashion.  For example, `bytes_fetched` can be updated only when the part download is complete. In this case, its values will only be `0` or the value of `size`.
 
-## Proxy AND TLS settings
+## Proxy and TLS settings
 
 To direct `dx-download-agent` to a proxy, please set the `HTTP_PROXY` environment variable to something like `export HTTP_PROXY=hostname:port`.  `HTTPS_PROXY` is also supported.
 
