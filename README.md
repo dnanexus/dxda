@@ -72,8 +72,15 @@ and you will get a brief summary of the status the downloads:
 
 ## Execution options
 
-* `--max_threads` (integer): maximum # of concurrent threads to use when downloading files
-* ...
+* `-max_threads` (integer): maximum # of concurrent threads to use when downloading files
+
+For example, the commmand
+
+```
+dx-download-agent download -max_threads=20 exome_bams_manifest.json.bz2
+```
+
+will create a worker pool of 20 threads that will download parts of files in parallel.  A maximum of 20 workers will perform downloads at any time.  Rate-limiting of downloads can be controlled to an extent by varying this number.
 
 
 ## Manifest stats database spec
@@ -112,6 +119,15 @@ python scripts/split_manifest.py manifest.json.bz2 -n 100
 
 will create manifest files containing each containing 100 files per project.  For example if there are 300 total files in manifest.json.bz2, the output of this command will create three files named: `manifest_001.json.bz2`, `manifest_002.json.bz2`, and `manifest_003.json.bz2`.   Each of these files can be used independently with the download agent.
 
+
+## Development Environment and Running with Docker
+
+`dx-download-agent` is written in Go and releases of its binary are generally self-contained (i.e. you do not need extra dependencies to run the executable for your architecture).  We also provide a Dockerized version that includes the necessary dependencies to develop for `dxda` and also run it.
+
+To execute `dx-download-agent` via its docker image, simply replace calls to `dx-download-agent ARGS` with `docker run dnanexus/dxda ARGS`.  Note that you will need to mount your local files and set appropriate environment variables to execute.  For example:
+
+```
+docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda download -max_threads=20 gvcfs.manifest.json.bz2```
 
 
 ## Additional notes

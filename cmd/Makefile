@@ -9,6 +9,9 @@ test:
 	./dx-download-agent download ../test_files/many_files.manifest.json.bz2
 	diff s.bin single_file.bin
 
+docker:
+	docker build -t dnanexus/dxda .
+
 clean:
 	go clean -x
 	rm -vf dx-download-agent
