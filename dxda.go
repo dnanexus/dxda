@@ -443,6 +443,7 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	_, err = localf.Write(body)
 	check(err)
 	localf.Close()
+	// TODO: This lock should not be required ideally. I don't know why sqlite3 is complaining here
 	mutex.Lock()
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()

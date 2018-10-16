@@ -130,6 +130,7 @@ To execute `dx-download-agent` via its docker image, simply replace calls to `dx
 docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda download -max_threads=20 manifest.json.bz2
 ```
 
+This repository can be used directly as a Go module as well.  In the `cmd/` directory, the `dx-download-agent.go` file is an example of how it can be used. 
 
 ## Additional notes
 
