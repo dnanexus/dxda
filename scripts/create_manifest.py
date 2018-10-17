@@ -34,8 +34,9 @@ def generate_manifest_file(folder, project, outfile, recursive):
       }
       output = dxpy.api.project_list_folder(project, input_params=inputs)
       manifest[project] += [fileID2manifest(obj['describe'], project) for obj in output['objects']]
-      for subf in output['folders']:
-          add_folder_to_manifest(subf)
+      if recursive:
+        for subf in output['folders']:
+            add_folder_to_manifest(subf)
 
   add_folder_to_manifest(folder)
   with open(outfile, "w") as f:
