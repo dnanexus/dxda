@@ -10,7 +10,7 @@ test:
 	diff s.bin single_file.bin
 
 docker:
-	docker build -t dnanexus/dxda .
+	docker build --no-cache -t dnanexus/dxda .
 
 clean:
 	go clean -x
