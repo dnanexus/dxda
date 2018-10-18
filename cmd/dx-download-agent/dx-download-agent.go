@@ -16,7 +16,7 @@ type downloadCmd struct {
 	maxThreads int
 }
 
-const downloadUsage = "dx-download-agent download [-max_threads N] <manifest.json.bz2>"
+const downloadUsage = "dx-download-agent download [-max_threads=N] <manifest.json.bz2>"
 
 func (*downloadCmd) Name() string     { return "download" }
 func (*downloadCmd) Synopsis() string { return "Download files in a manifest" }
