@@ -11,7 +11,8 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
 
 # Install Go packages and Download agent executables
-RUN go get github.com/google/subcommands && go install github.com/google/subcommands && \
+RUN go get github.com/jpillora/overseer && go install github.com/jpillora/overseer  && \
+    go get github.com/google/subcommands && go install github.com/google/subcommands && \
     go get github.com/dnanexus/dxda && go install github.com/dnanexus/dxda && \
     go install github.com/dnanexus/dxda/cmd/dx-download-agent
 

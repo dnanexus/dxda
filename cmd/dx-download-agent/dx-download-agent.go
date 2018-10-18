@@ -9,6 +9,7 @@ import (
 	// The dxda package should contain all core functionality
 	"github.com/dnanexus/dxda"
 	"github.com/google/subcommands"
+	"github.com/jpillora/overseer"
 )
 
 type downloadCmd struct {
@@ -72,6 +73,13 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 // The CLI is simply a wrapper around the dxda package
 func main() {
+	overseer.Run(overseer.Config{
+		Program: prog,
+		Address: ":3000",
+	})
+}
+
+func prog(state overseer.State) {
 	subcommands.Register(subcommands.HelpCommand(), "")
 	subcommands.Register(subcommands.FlagsCommand(), "")
 	subcommands.Register(subcommands.CommandsCommand(), "")
