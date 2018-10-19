@@ -498,6 +498,22 @@ func ResetDBPart(manifestFileName string, p DBPart) {
 
 }
 
+// ResetDBFile ...
+func ResetDBFile(manifestFileName string, p DBPart) {
+	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
+	statsFname := manifestFileName + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
+	db, err := sql.Open("sqlite3", statsFname)
+	check(err)
+	defer db.Close()
+	tx, err := db.Begin()
+	check(err)
+	defer tx.Commit()
+
+	_, err = tx.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = 0 WHERE file_id = '%s'", p.FileID))
+	check(err)
+
+}
+
 // DownloadDBPart ...
 func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
@@ -529,20 +545,25 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 // CheckDBPart ...
 func CheckDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, mutex *sync.Mutex) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
-	localf, err := os.Open(fname)
-	check(err)
-	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
-	check(err)
-	body := make([]byte, p.Size)
-	_, err = localf.Read(body)
-	check(err)
-	localf.Close()
+	if _, err := os.Stat(fname); os.IsNotExist(err) {
+		ResetDBFile(manifestFileName, p)
+		fmt.Printf("File %s does not exist. Please re-issue the download command to resolve.", fname)
+	} else {
+		localf, err := os.Open(fname)
+		check(err)
+		_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
+		check(err)
+		body := make([]byte, p.Size)
+		_, err = localf.Read(body)
+		check(err)
+		localf.Close()
 
-	if md5str(body) != p.MD5 {
-		// TODO: This lock should not be required ideally. I don't know why sqlite3 is complaining here
-		fmt.Printf("Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.\n", p.FileName, p.PartID)
-		mutex.Lock()
-		ResetDBPart(manifestFileName, p)
-		mutex.Unlock()
+		if md5str(body) != p.MD5 {
+			// TODO: This lock should not be required ideally. I don't know why sqlite3 is complaining here
+			fmt.Printf("Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.\n", p.FileName, p.PartID)
+			mutex.Lock()
+			ResetDBPart(manifestFileName, p)
+			mutex.Unlock()
+		}
 	}
 }
