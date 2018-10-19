@@ -342,10 +342,8 @@ func DownloadProgress(fname string) string {
 	return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
 }
 
-func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
-	var wg *sync.WaitGroup
+func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	for j := range jobs {
-		wg = j.wg
 		if _, ok := j.urls[j.part.FileID]; !ok {
 			payload := fmt.Sprintf("{\"project\": \"%s\"}", j.part.Project)
 			_, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
@@ -358,21 +356,15 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 		recoverer(10, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
 		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
-	if wg != nil {
-		wg.Done()
-	}
+	wg.Done()
 }
 
-func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex) {
-	var wg *sync.WaitGroup
+func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	for j := range jobs {
-		wg = j.wg
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
 		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
 	}
-	if wg != nil {
-		wg.Done()
-	}
+	wg.Done()
 }
 
 type downloader func(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex)
@@ -430,7 +422,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	var mutex = &sync.Mutex{}
 	for w := 1; w <= opts.NumThreads; w++ {
 		wg.Add(1)
-		go worker(w, jobs, token, mutex)
+		go worker(w, jobs, token, mutex, &wg)
 	}
 	wg.Wait()
 	fmt.Println("")
@@ -468,7 +460,7 @@ func CheckFileIntegrity(fname string, opts Opts) {
 	var mutex = &sync.Mutex{}
 	for w := 1; w <= opts.NumThreads; w++ {
 		wg.Add(1)
-		go fileIntegrityWorker(w, jobs, mutex)
+		go fileIntegrityWorker(w, jobs, mutex, &wg)
 	}
 	wg.Wait()
 	fmt.Println("")
