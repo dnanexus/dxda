@@ -75,7 +75,7 @@ func recoverer(maxPanics int, f func()) {
 		if err := recover(); err != nil {
 			fmt.Println(err)
 			if maxPanics == 0 {
-				panic("Too many attempts to restart entire download process. Please contact DNAnexus for assistance.")
+				panic("Too many attempts to restart entire download process. Please contact support@dnanexus.com for assistance.")
 			} else {
 				fmt.Println("Attempting to gracefully recover from error.")
 				go recoverer(maxPanics-1, f)
