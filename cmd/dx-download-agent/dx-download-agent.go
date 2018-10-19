@@ -96,6 +96,7 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	fname := f.Args()[0]
 
 	var opts dxda.Opts
+	opts.NumThreads = p.maxThreads
 
 	dxda.CheckFileIntegrity(fname, opts)
 	return subcommands.ExitSuccess

@@ -365,6 +365,7 @@ func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex) {
 	var wg *sync.WaitGroup
 	for j := range jobs {
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
+		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
 	}
 	wg.Done()
 }
@@ -535,14 +536,14 @@ func CheckDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, mutex *s
 	check(err)
 	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
 	check(err)
-	body := make([]byte, p.BlockSize)
+	body := make([]byte, p.Size)
 	_, err = localf.Read(body)
 	check(err)
 	localf.Close()
 
 	if md5str(body) != p.MD5 {
 		// TODO: This lock should not be required ideally. I don't know why sqlite3 is complaining here
-		fmt.Printf("Found md5sum mismatch for %s part %d. Please re-issue the download command to resolve.", p.FileName, p.PartID)
+		fmt.Printf("Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.\n", p.FileName, p.PartID)
 		mutex.Lock()
 		ResetDBPart(manifestFileName, p)
 		mutex.Unlock()
