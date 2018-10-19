@@ -73,12 +73,13 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 func recoverer(maxPanics int, f func()) {
 	defer func() {
 		if err := recover(); err != nil {
-			fmt.Println(err)
 			if maxPanics == 0 {
-				panic("Too many attempts to restart entire download process. Please contact support@dnanexus.com for assistance.")
+				fmt.Println("Too many attempts to restart entire download process. Please contact support@dnanexus.com for assistance.")
+				os.Exit(1)
 			} else {
-				fmt.Println("Attempting to gracefully recover from error.")
-				go recoverer(maxPanics-1, f)
+				fmt.Println(err)
+				fmt.Println("Attempting to recover gracefully")
+				recoverer(maxPanics-1, f)
 			}
 		}
 	}()
