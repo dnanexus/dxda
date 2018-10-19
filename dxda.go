@@ -364,6 +364,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex) {
 	var wg *sync.WaitGroup
 	for j := range jobs {
+		wg = j.wg
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
 		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
 	}
