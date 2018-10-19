@@ -108,6 +108,8 @@ func main() {
 	subcommands.Register(subcommands.CommandsCommand(), "")
 	subcommands.Register(&downloadCmd{}, "")
 	subcommands.Register(&progressCmd{}, "")
+	subcommands.Register(&inspectCmd{}, "")
+
 	// TODO: modify this to use individual subcommand help
 	if len(os.Args) == 1 {
 		fmt.Printf("Usage:\n  For progress:\n  $ %s\n\n  For downloading:\n  $ %s\n", progressUsage, downloadUsage)
