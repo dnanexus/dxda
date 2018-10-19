@@ -464,6 +464,7 @@ func CheckFileIntegrity(fname string, opts Opts) {
 	}
 	wg.Wait()
 	fmt.Println("")
+	fmt.Println("Integrity check complete.")
 }
 
 // UpdateDBPart ...
