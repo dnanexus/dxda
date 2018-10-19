@@ -70,28 +70,8 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	return subcommands.ExitSuccess
 }
 
-func recoverer(maxPanics int, f func()) {
-	defer func() {
-		if err := recover(); err != nil {
-			if maxPanics == 0 {
-				fmt.Println("Too many attempts to restart entire download process. Please contact support@dnanexus.com for assistance.")
-				os.Exit(1)
-			} else {
-				fmt.Println(err)
-				fmt.Println("Attempting to recover gracefully")
-				recoverer(maxPanics-1, f)
-			}
-		}
-	}()
-	f()
-}
-
 // The CLI is simply a wrapper around the dxda package
 func main() {
-	recoverer(10, prog)
-}
-
-func prog() {
 	subcommands.Register(subcommands.HelpCommand(), "")
 	subcommands.Register(subcommands.FlagsCommand(), "")
 	subcommands.Register(subcommands.CommandsCommand(), "")

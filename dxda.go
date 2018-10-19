@@ -355,10 +355,27 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 			j.urls[j.part.FileID] = u
 			mutex.Unlock()
 		}
-		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls, mutex)
+		recoverer(10, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
 		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
 	wg.Done()
+}
+
+type downloader func(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex)
+
+func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Println(err)
+			if maxPanics == 0 {
+				panic("Too many attempts to restart downloading part. Please contact support@dnanexus.com for assistance.")
+			} else {
+				fmt.Println("Attempting to gracefully recover from error.")
+				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
+			}
+		}
+	}()
+	downloadPart(manifestFileName, p, wg, urls, mutex)
 }
 
 // DownloadManifestDB ...
