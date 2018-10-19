@@ -70,6 +70,37 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	return subcommands.ExitSuccess
 }
 
+type inspectCmd struct {
+	maxThreads int
+}
+
+const inspectUsage = "dx-download-agent inspect [-max_threads=N] <manifest.json.bz2>"
+
+func (*inspectCmd) Name() string { return "inspect" }
+func (*inspectCmd) Synopsis() string {
+	return "Inspect files downloaded in a manifest + additional 'health' checks"
+}
+func (*inspectCmd) Usage() string {
+	return downloadUsage
+}
+func (p *inspectCmd) SetFlags(f *flag.FlagSet) {
+	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when inspecting files")
+}
+
+func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	// TODO: Is there a generic way to do this using subcommands?
+	if len(f.Args()) == 0 {
+		fmt.Println(inspectUsage)
+		os.Exit(1)
+	}
+	fname := f.Args()[0]
+
+	var opts dxda.Opts
+
+	dxda.CheckFileIntegrity(fname, opts)
+	return subcommands.ExitSuccess
+}
+
 // The CLI is simply a wrapper around the dxda package
 func main() {
 	subcommands.Register(subcommands.HelpCommand(), "")

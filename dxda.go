@@ -361,6 +361,14 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 	wg.Done()
 }
 
+func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex) {
+	var wg *sync.WaitGroup
+	for j := range jobs {
+		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
+	}
+	wg.Done()
+}
+
 type downloader func(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex)
 
 func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
@@ -422,6 +430,44 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	fmt.Println("")
 }
 
+// CheckFileIntegrity ...
+func CheckFileIntegrity(fname string, opts Opts) {
+	statsFname := fname + ".stats.db"
+
+	db, err := sql.Open("sqlite3", statsFname)
+	check(err)
+	cnt := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched == size", statsFname)
+	check(err)
+	rows, err := db.Query("SELECT * FROM manifest_stats WHERE bytes_fetched == size")
+
+	jobs := make(chan JobInfo, cnt)
+
+	var wg sync.WaitGroup
+
+	for i := 1; rows.Next(); i++ {
+		var p DBPart
+		err = rows.Scan(&p.FileID, &p.Project, &p.FileName, &p.Folder, &p.PartID, &p.MD5, &p.Size, &p.BlockSize, &p.BytesFetched)
+		check(err)
+		var j JobInfo
+		j.manifestFileName = fname
+		j.part = p
+		j.wg = &wg
+		j.tmpid = i
+		jobs <- j
+	}
+	close(jobs)
+	rows.Close()
+	db.Close()
+
+	var mutex = &sync.Mutex{}
+	for w := 1; w <= opts.NumThreads; w++ {
+		wg.Add(1)
+		go fileIntegrityWorker(w, jobs, mutex)
+	}
+	wg.Wait()
+	fmt.Println("")
+}
+
 // UpdateDBPart ...
 func UpdateDBPart(manifestFileName string, p DBPart) {
 	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
@@ -434,6 +480,22 @@ func UpdateDBPart(manifestFileName string, p DBPart) {
 	defer tx.Commit()
 
 	_, err = tx.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = %d WHERE file_id = '%s' AND part_id = '%d'", p.Size, p.FileID, p.PartID))
+	check(err)
+
+}
+
+// ResetDBPart ...
+func ResetDBPart(manifestFileName string, p DBPart) {
+	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
+	statsFname := manifestFileName + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
+	db, err := sql.Open("sqlite3", statsFname)
+	check(err)
+	defer db.Close()
+	tx, err := db.Begin()
+	check(err)
+	defer tx.Commit()
+
+	_, err = tx.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = 0 WHERE file_id = '%s' AND part_id = '%d'", p.FileID, p.PartID))
 	check(err)
 
 }
@@ -464,4 +526,25 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	mutex.Lock()
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()
+}
+
+// CheckDBPart ...
+func CheckDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, mutex *sync.Mutex) {
+	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
+	localf, err := os.Open(fname)
+	check(err)
+	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
+	check(err)
+	body := make([]byte, p.BlockSize)
+	_, err = localf.Read(body)
+	check(err)
+	localf.Close()
+
+	if md5str(body) != p.MD5 {
+		// TODO: This lock should not be required ideally. I don't know why sqlite3 is complaining here
+		fmt.Printf("Found md5sum mismatch for %s part %d. Please re-issue the download command to resolve.", p.FileName, p.PartID)
+		mutex.Lock()
+		ResetDBPart(manifestFileName, p)
+		mutex.Unlock()
+	}
 }
