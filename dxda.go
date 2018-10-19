@@ -547,7 +547,9 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 func CheckDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, mutex *sync.Mutex) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
+		mutex.Lock()
 		ResetDBFile(manifestFileName, p)
+		mutex.Unlock()
 		fmt.Printf("File %s does not exist. Please re-issue the download command to resolve.", fname)
 	} else {
 		localf, err := os.Open(fname)
