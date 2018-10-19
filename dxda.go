@@ -358,7 +358,9 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex) {
 		recoverer(10, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
 		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
-	wg.Done()
+	if wg != nil {
+		wg.Done()
+	}
 }
 
 func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex) {
@@ -368,7 +370,9 @@ func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex) {
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
 		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
 	}
-	wg.Done()
+	if wg != nil {
+		wg.Done()
+	}
 }
 
 type downloader func(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex)
