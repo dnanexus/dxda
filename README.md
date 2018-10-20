@@ -56,8 +56,6 @@ Obtained token using ~/.dnanexus_config/environment.json
 100/200 MB      11/17 Parts Downloaded
 ```
 
-This command will also probe the environment and, if it doesn't appear another download process is running, it will start a download process within your terminal using the current working directory.
-
 You can query the progress of an existing download in a separate terminal
 
 ```
