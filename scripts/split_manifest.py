@@ -22,7 +22,7 @@ def split_manifest(manifest_file, num_files):
 def main():
     parser = argparse.ArgumentParser(description='Split a manifest file into multiple manifests.')
     parser.add_argument('manifest_file', help='')
-    parser.add_argument('-n', '--num_files', default=100, help="Number of files per manifest")
+    parser.add_argument('-n', '--num_files', default=100, type=int, help="Number of files per manifest")
     args = parser.parse_args()
     split_manifest(args.manifest_file, args.num_files)
 
