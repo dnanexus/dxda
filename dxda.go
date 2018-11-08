@@ -245,7 +245,6 @@ func CreateManifestDB(fname string) {
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
-	check(err)
 	sqlStmt := `
 	CREATE TABLE manifest_stats (
 		file_id text, 
@@ -390,6 +389,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 
 // DownloadManifestDB ...
 func DownloadManifestDB(fname, token string, opts Opts) {
+	// TODO: Update to not require manifest structure read into memory
 	m := ReadManifest(fname)
 	fmt.Printf("Preparing files for download\n")
 	urls := PrepareFilesForDownload(m, token)
@@ -526,6 +526,7 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	check(err)
 	headers := make(map[string]string)
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1)
+	// TODO: Avoid locking here?
 	mutex.Lock()
 	u := urls[p.FileID]
 	mutex.Unlock()
