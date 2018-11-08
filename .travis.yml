@@ -7,4 +7,4 @@ before_install:
 - docker build -t dnanexus/dxda .
 
 script:
-- docker run dnanexus/dxda -h
+- docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda download -max_threads=`nproc` test_files/many_files.manifest.json.bz2
