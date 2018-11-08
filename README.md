@@ -1,5 +1,8 @@
 # dx-download-agent
+
 CLI tool to manage the download of large quantities of files from DNAnexus
+
+[![Build Status](https://travis-ci.org/dnanexus/dxda.svg?branch=master)](https://travis-ci.org/dnanexus/dxda)
 
 **WARNING: This is an alpha version of this tool. It is currently in a specification/draft stage and it is likely incomplete. Please use at your own risk.**
 
