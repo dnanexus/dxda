@@ -16,7 +16,9 @@ script:
   - docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda:$TAG download -max_threads=`nproc` test_files/single_file.manifest.json.bz2
   # If all the tests pass, push the docker image and create a release
   - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+  - docker tag dnanexus/dxda:$TAG dnanexus/dxda:latest
   - docker push dnanexus/dxda:$TAG
+  - docker push dnanexus/dxda:latest
 
 branches:
   only:
