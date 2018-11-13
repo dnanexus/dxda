@@ -9,7 +9,7 @@ env:
   TAG="${CURRENT_DATE}_${SHORT_COMMIT}"
 
 before_install:
-  - docker build -t dnanexus/dxda:$SHORT_COMMIT .
+  - docker build -t dnanexus/dxda:$TAG .
 
 script:
   # Placeholder for running an entire test suite
