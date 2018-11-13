@@ -17,3 +17,7 @@ script:
   # If all the tests pass, push the docker image and create a release
   - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
   - docker push dnanexus/dxda:$TAG
+
+branches:
+  only:
+  - master
