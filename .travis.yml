@@ -4,9 +4,10 @@ services:
   - docker
 
 env:
-  SHORT_COMMIT=`echo $TRAVIS_COMMIT | cut -c1-7`
-  CURRENT_DATE=`date '+%Y%m%d%H%M%S'`
-  TAG="${CURRENT_DATE}_${SHORT_COMMIT}"
+  - SHORT_COMMIT=`echo $TRAVIS_COMMIT | cut -c1-7`
+  - CURRENT_DATE=`date '+%Y%m%d%H%M%S'`
+  - TAG="${CURRENT_DATE}_${SHORT_COMMIT}"
+  - PATH=/snap/bin:$PATH
 
 before_install:
   - docker build -t dnanexus/dxda:$TAG .
@@ -23,3 +24,40 @@ script:
 branches:
   only:
   - master
+
+
+language: go
+
+addons:
+  apt:
+    packages:
+    # needed for the nfpm pipe:
+    - rpm
+    # needed for the snap pipe:
+    - snapcraft
+
+
+install:
+# needed for the snap pipe:
+- sudo snap install snapcraft --classic
+
+
+after_success:
+# docker login is required if you want to push docker images.
+# DOCKER_PASSWORD should be a secret in your .travis.yml configuration.
+- test -n "$TRAVIS_TAG" && docker login -u=myuser -p="$DOCKER_PASSWORD"
+# snapcraft login is required if you want to push snapcraft packages to the
+# store.
+# You'll need to run `snapcraft export-login snap.login` and
+# `travis encrypt-file snap.login --add` to add the key to the travis
+# environment.
+- test -n "$TRAVIS_TAG" && snapcraft login --with snap.login
+
+# calls goreleaser
+deploy:
+- provider: script
+  skip_cleanup: true
+  script: curl -sL https://git.io/goreleaser | bash
+  on:
+    tags: true
+    condition: $TRAVIS_OS_NAME = linux
