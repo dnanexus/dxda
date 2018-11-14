@@ -15,4 +15,7 @@ RUN go get github.com/google/subcommands && go install github.com/google/subcomm
     go get github.com/dnanexus/dxda && go install github.com/dnanexus/dxda && \
     go install github.com/dnanexus/dxda/cmd/dx-download-agent
 
+# Build architecture-specific binaries
+RUN GOOS=darwin GOARCH=amd64 go build -o dx-download-agent-osx /go/src/github.com/dnanexus/dxda/cmd/dx-download-agent 
+
 ENTRYPOINT ["/go/bin/dx-download-agent"]
