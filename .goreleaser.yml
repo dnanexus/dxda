@@ -2,7 +2,7 @@
 # Make sure to check the documentation at http://goreleaser.com
 
 builds:
--   main: .
+-   main: dxda.go
 -
     main: ./cmd/dx-download-agent/dx-download-agent.go
     binary: dx-download-agent
