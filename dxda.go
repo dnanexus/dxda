@@ -247,7 +247,7 @@ func CreateManifestDB(fname string) {
 	defer db.Close()
 	sqlStmt := `
 	CREATE TABLE manifest_stats (
-		file_id text, 
+		file_id text,
 		project text,
 		name text,
 		folder text,
@@ -282,6 +282,8 @@ func CreateManifestDB(fname string) {
 
 // PrepareFilesForDownload ...
 // TODO: Optimize this for only files that need to be downloaded
+//
+// OQ: The 'urls' map is empty
 func PrepareFilesForDownload(m Manifest, token string) map[string]DXDownloadURL {
 	urls := make(map[string]DXDownloadURL)
 	for _, files := range m {
@@ -345,10 +347,13 @@ func DownloadProgress(fname string) string {
 	return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
 }
 
+const secondsInYear int = 60 * 60 * 24 * 365
+
 func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	for j := range jobs {
 		if _, ok := j.urls[j.part.FileID]; !ok {
-			payload := fmt.Sprintf("{\"project\": \"%s\"}", j.part.Project)
+			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\" : \"%d\" }",
+				j.part.Project, secondsInYear)
 			_, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
@@ -374,6 +379,8 @@ type downloader func(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls
 
 func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
 	defer func() {
+		// The goroutine has panicked. Catch the error code, print it,
+		// and try downloading the part again. This can be retried up to [maxPanics] times.
 		if err := recover(); err != nil {
 			fmt.Println(err)
 			if maxPanics == 0 {
