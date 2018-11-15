@@ -34,7 +34,7 @@ def generate_manifest_file(folder, project, outfile, recursive):
       }
       output = dxpy.api.project_list_folder(project, input_params=inputs)
 
-      # leave on files, remove dx-objects such as records
+      # leave only files. remove dx-objects such as records
       files = list(filter(lambda obj: obj['id'].startswith('file-'),
                           output['objects']))
       manifest[project] += [fileID2manifest(obj['describe'], project) for obj in files]
