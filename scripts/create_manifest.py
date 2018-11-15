@@ -33,14 +33,22 @@ def generate_manifest_file(folder, project, outfile, recursive):
         'fields': {'id': True, 'name': True, 'folder': True, 'parts': True }
       }
       output = dxpy.api.project_list_folder(project, input_params=inputs)
-      manifest[project] += [fileID2manifest(obj['describe'], project) for obj in output['objects']]
+
+      # leave on files, remove dx-objects such as records
+      files = list(filter(lambda obj: obj['id'].startswith('file-'),
+                          output['objects']))
+      manifest[project] += [fileID2manifest(obj['describe'], project) for obj in files]
       if recursive:
         for subf in output['folders']:
             add_folder_to_manifest(subf)
 
   add_folder_to_manifest(folder)
-  with open(outfile, "w") as f:
-    f.write(bz2.compress(json.dumps(manifest, indent=2, sort_keys=True)))
+  # binary mode is needed for python 3.
+  # This hasn't been tested with python 2, hopefully, it will work.
+  with open(outfile, "wb") as f:
+      js_data = json.dumps(manifest, indent=2, sort_keys=True)
+      data = bz2.compress(js_data.encode())
+      f.write(data)
 
 def main():
     parser = argparse.ArgumentParser(description='Create a manifest file from a DNAnexus directory')
