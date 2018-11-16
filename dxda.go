@@ -347,10 +347,10 @@ func DownloadProgressOneTime(fname string) string {
 	return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
 }
 
-const numSecProgressReport = 2
+const numSecProgressReport = 60
 
 // A loop that reports on download progress periodically.
-func DownloadProgressContinuous(fname string) string {
+func downloadProgressContinuous(fname string) {
 	dbFname := fname + ".stats.db"
 
 	// total amounts to download, calculated once
@@ -362,16 +362,18 @@ func DownloadProgressContinuous(fname string) string {
 
 	for ; numPartsComplete < numParts ; {
 		time.Sleep(numSecProgressReport * time.Second)
-		prevBytes := numBytesComplete
+		numBytesCompletePrev = numBytesComplete
 
 		// query the current progress
-		numBytesComplete := queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
-		numPartsComplete := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
+		numBytesComplete = queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
+		numPartsComplete = queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
 
 		// calculate bandwitdh
-		bandwidth := float(numBytesComplete - prevBytes) / float(numSecProgressReport)
+		bandwidthBytes := float64(numBytesComplete - numBytesCompletePrev) / float64(numSecProgressReport)
+		bandwidthKbSec := bandwidthBytes / float64(1024)
 
-		return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
+		fmt.Printf("%.0f KB/sec\t%d/%d MB\t%d/%d Parts Downloaded\n",
+			bandwidthKbSec, b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
 	}
 }
 
@@ -390,7 +392,6 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 			mutex.Unlock()
 		}
 		recoverer(10, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
-		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
 	wg.Done()
 }
@@ -463,6 +464,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 		wg.Add(1)
 		go worker(w, jobs, token, mutex, &wg)
 	}
+	go downloadProgressContinuous(fname)
 	wg.Wait()
 	fmt.Println("")
 }
