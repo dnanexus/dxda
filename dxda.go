@@ -412,7 +412,7 @@ const secondsInYear int = 60 * 60 * 24 * 365
 func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	for j := range jobs {
 		if _, ok := j.urls[j.part.FileID]; !ok {
-			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\" : \"%d\" }",
+			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
 			_, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			var u DXDownloadURL
