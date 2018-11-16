@@ -331,10 +331,10 @@ func queryDBIntegerResult(query, dbFname string) int {
 	return cnt
 }
 
-func b2MB(bytes int) int { return bytes / 1000000 }
+func b2MB(bytes int) int { return bytes / (1024 * 1024) }
 
-// DownloadProgress ...
-func DownloadProgress(fname string) string {
+// Report on progress so far
+func DownloadProgressOneTime(fname string) string {
 	// TODO: memoize totals so DB is not re-queried
 
 	dbFname := fname + ".stats.db"
@@ -345,6 +345,34 @@ func DownloadProgress(fname string) string {
 	numBytes := queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats", dbFname)
 
 	return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
+}
+
+const numSecProgressReport = 2
+
+// A loop that reports on download progress periodically.
+func DownloadProgressContinuous(fname string) string {
+	dbFname := fname + ".stats.db"
+
+	// total amounts to download, calculated once
+	numParts := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats", dbFname)
+	numBytes := queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats", dbFname)
+	numBytesComplete := 0
+	numPartsComplete := 0
+	numBytesCompletePrev := 0
+
+	for ; numPartsComplete < numParts ; {
+		time.Sleep(numSecProgressReport * time.Second)
+		prevBytes := numBytesComplete
+
+		// query the current progress
+		numBytesComplete := queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
+		numPartsComplete := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
+
+		// calculate bandwitdh
+		bandwidth := float(numBytesComplete - prevBytes) / float(numSecProgressReport)
+
+		return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
+	}
 }
 
 const secondsInYear int = 60 * 60 * 24 * 365

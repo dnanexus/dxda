@@ -66,7 +66,7 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		os.Exit(1)
 	}
 	fname := f.Args()[0]
-	fmt.Println(dxda.DownloadProgress(fname))
+	fmt.Println(dxda.DownloadProgressOneTime(fname))
 	return subcommands.ExitSuccess
 }
 
