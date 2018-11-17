@@ -341,6 +341,13 @@ type DownloadStatus struct {
 	NumBytes int
 	NumPartsComplete int
 	NumBytesComplete int
+
+	// periodicity of progress report
+	ProgressInterval time.Duration
+
+	// Size of window in nanoseconds where to look for
+	// completed downloads
+	MaxWindowSize int64
 }
 
 func InitDownloadStatus(fname string) DownloadStatus {
@@ -350,28 +357,36 @@ func InitDownloadStatus(fname string) DownloadStatus {
 	ds.DBFname = dbFname
 	ds.NumParts = queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats", dbFname)
 	ds.NumBytes = queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats", dbFname)
+	ds.ProgressInterval = time.Duration(5) * time.Second
+	ds.MaxWindowSize = int64(2 * 60 * 1000 * 1000 * 1000)
 	return ds
 }
 
-// Calculate bandwidth in KB/sec. Query the database, and find
+// Calculate bandwidth in MB/sec. Query the database, and find
 // all recently completed downloaded chunks.
-func calcBandwidth(dbName string) int {
-	const timeWindowSec = 2 * 60
-	const timeWindowNanoSec = timeWindowSec * 1000 * 1000 * 1000
+func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
+	if timeWindowNanoSec < 1000 {
+		// sanity check; if the interval is very short, just return zero.
+		return 0.0
+	}
 
+	// Time and time window measured in nano seconds
 	now := time.Now().UnixNano()
 	lowerBound := now - timeWindowNanoSec
 
 	query := fmt.Sprintf(
 		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE download_done_time > %d",
 		lowerBound)
-	bytesDownloadedInTimeWindow := queryDBIntegerResult(query, dbName)
+	bytesDownloadedInTimeWindow := queryDBIntegerResult(query, ds.DBFname)
 
-	return int(float64(bytesDownloadedInTimeWindow) / float64(timeWindowSec))
+	// convert to megabytes downloaded divided by seconds
+	mbDownloaded := float64(bytesDownloadedInTimeWindow) / float64(1024 * 1024)
+	timeDeltaSec := float64(timeWindowNanoSec) / float64(1000 * 1000 * 1000)
+	return mbDownloaded / timeDeltaSec
 }
 
 // Report on progress so far
-func DownloadProgressOneTime(ds *DownloadStatus) string {
+func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string {
 	// query the current progress
 	ds.NumBytesComplete = queryDBIntegerResult(
 		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size",
@@ -381,18 +396,32 @@ func DownloadProgressOneTime(ds *DownloadStatus) string {
 		ds.DBFname)
 
 	// calculate bandwitdh
-	bandwidthKbSec := calcBandwidth(ds.DBFname)
+	bandwidthMBSec := calcBandwidth(ds, timeWindowNanoSec)
 
-	return fmt.Sprintf("%d KB/sec\t%d/%d MB\t%d/%d Parts Downloaded and written to disk\n",
-		bandwidthKbSec, b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts)
+	desc := fmt.Sprintf("%.1f MB/sec\t%d/%d MB\t%d/%d Parts Downloaded and written to disk\n",
+		bandwidthMBSec, b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts)
+	return desc
 }
 
 // A loop that reports on download progress periodically.
 func downloadProgressContinuous(ds *DownloadStatus) {
-	const numSecProgressReport = 5
+	// Start time of the measurements, in nano seconds
+	startTime := time.Now()
+
 	for ; ds.NumPartsComplete < ds.NumParts ; {
-		time.Sleep(numSecProgressReport * time.Second)
-		desc := DownloadProgressOneTime(ds)
+		// Sleep for a number of seconds, so as to not flood the screen
+		// with messages. This also substantially limits the number
+		// of database queries.
+		time.Sleep(ds.ProgressInterval)
+
+		// If we just started the measurements, we have a short
+		// history to examine. Limit the window size accordingly.
+		now := time.Now()
+		deltaNanoSec := now.UnixNano() - startTime.UnixNano()
+		if (deltaNanoSec > ds.MaxWindowSize) {
+			deltaNanoSec = ds.MaxWindowSize
+		}
+		desc := DownloadProgressOneTime(ds, deltaNanoSec)
 		fmt.Printf(desc)
 	}
 }
@@ -545,7 +574,7 @@ func UpdateDBPart(manifestFileName string, p DBPart) {
 	now := time.Now().UnixNano()
 	_, err = tx.Exec(fmt.Sprintf(
 		"UPDATE manifest_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
-		p.Size, p.FileID, p.PartID, now))
+		p.Size, now, p.FileID, p.PartID))
 	check(err)
 
 }
@@ -592,10 +621,12 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	check(err)
 	headers := make(map[string]string)
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1)
+
 	// TODO: Avoid locking here?
 	mutex.Lock()
 	u := urls[p.FileID]
 	mutex.Unlock()
+
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
