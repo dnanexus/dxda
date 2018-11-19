@@ -44,11 +44,29 @@ To start the download:
 ```
 dx-download-agent download exome_bams_manifest.json.bz2
 Obtained token using ~/.dnanexus_config/environment.json
-100/200 MB      11/17 Parts Downloaded
+Required disk space = 26.4GB, available = 50.4GB
+Preparing files for download
+Downloading files using 8 threads
+0.0 MB/sec	0/27078 MB	3/327 Parts Downloaded and written to disk
+3.0 MB/sec	29/27078 MB	4/327 Parts Downloaded and written to disk
+2.0 MB/sec	29/27078 MB	4/327 Parts Downloaded and written to disk
+1.5 MB/sec	29/27078 MB	4/327 Parts Downloaded and written to disk
+17.7 MB/sec	441/27078 MB	9/327 Parts Downloaded and written to disk
+17.9 MB/sec	537/27078 MB	10/327 Parts Downloaded and written to disk
+18.8 MB/sec	656/27078 MB	12/327 Parts Downloaded and written to disk
+18.8 MB/sec	752/27078 MB	13/327 Parts Downloaded and written to disk
+21.0 MB/sec	944/27078 MB	15/327 Parts Downloaded and written to disk
+22.7 MB/sec	1136/27078 MB	17/327 Parts Downloaded and written to disk
+21.6 MB/sec	1184/27078 MB	18/327 Parts Downloaded and written to disk
+21.4 MB/sec	1280/27078 MB	19/327 Parts Downloaded and written to disk
+21.2 MB/sec	1376/27078 MB	20/327 Parts Downloaded and written to disk
 ```
 
-Prior to starting the data transfer, a check is made to see that there is sufficient disk space for the entire list of files. If not, an error
-is reported, and nothing is downloaded.
+A continuous report on download progress is written to the
+screen. Prior to starting the data transfer, a check is made to see
+that there is sufficient disk space for the entire list of files. If
+not, an error is reported, and nothing is downloaded. Download speed
+reflects not only network bandwidth, but also the IO capability of your machine.
 
 You can query the progress of an existing download in a separate terminal
 
@@ -59,7 +77,7 @@ dx-download-agent progress exome_bams_manifest.json.bz2
 and you will get a brief summary of the status the downloads:
 
 ```
-100/200 MB      11/17 Parts Downloaded
+21.6 MB/sec	1184/27078 MB	18/327 Parts Downloaded and written to disk
 ```
 
 
