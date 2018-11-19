@@ -313,6 +313,7 @@ type DBPart struct {
 	Size         int
 	BlockSize    int
 	BytesFetched int
+	DownloadDoneTime int64    // The time when it completed downloading
 }
 
 // CreateManifestDB ...
@@ -333,7 +334,8 @@ func CreateManifestDB(fname string) {
 		md5 text,
 		size integer,
 		block_size integer,
-		bytes_fetched integer
+		bytes_fetched integer,
+                download_done_time integer
 	);
 	`
 	_, err = db.Exec(sqlStmt)
@@ -346,9 +348,9 @@ func CreateManifestDB(fname string) {
 			for pID := range f.Parts {
 				sqlStmt = fmt.Sprintf(`
 				INSERT INTO manifest_stats
-				VALUES ('%s', '%s', '%s', '%s', %s, '%s', '%d', '%d', '%d');
+				VALUES ('%s', '%s', '%s', '%s', %s, '%s', '%d', '%d', '%d', '%d');
 				`,
-					f.ID, proj, f.Name, f.Folder, pID, f.Parts[pID].MD5, f.Parts[pID].Size, f.Parts["1"].Size, 0)
+					f.ID, proj, f.Name, f.Folder, pID, f.Parts[pID].MD5, f.Parts[pID].Size, f.Parts["1"].Size, 0, 0)
 				_, err = db.Exec(sqlStmt)
 				check(err)
 			}
@@ -391,25 +393,101 @@ type JobInfo struct {
 	tmpid            int
 }
 
-func b2MB(bytes int) int { return bytes / 1000000 }
+func b2MB(bytes int) int { return bytes / (1024 * 1024) }
 
-// DownloadProgress ...
-func DownloadProgress(fname string) string {
-	// TODO: memoize totals so DB is not re-queried
+type DownloadStatus struct {
+	DBFname string
+	NumParts int
+	NumBytes int
+	NumPartsComplete int
+	NumBytesComplete int
 
-	dbFname := fname + ".stats.db"
-	numPartsComplete := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
-	numParts := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats", dbFname)
+	// periodicity of progress report
+	ProgressInterval time.Duration
 
-	numBytesComplete := queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size", dbFname)
-	numBytes := queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats", dbFname)
-
-	return fmt.Sprintf("%d/%d MB\t%d/%d Parts Downloaded", b2MB(numBytesComplete), b2MB(numBytes), numPartsComplete, numParts)
+	// Size of window in nanoseconds where to look for
+	// completed downloads
+	MaxWindowSize int64
 }
 
-const secondsInYear int = 60 * 60 * 24 * 365
+func InitDownloadStatus(fname string) DownloadStatus {
+	// total amounts to download, calculated once
+	dbFname := fname + ".stats.db"
+	var ds DownloadStatus
+	ds.DBFname = dbFname
+	ds.NumParts = queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats", dbFname)
+	ds.NumBytes = queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats", dbFname)
+	ds.ProgressInterval = time.Duration(5) * time.Second
+	ds.MaxWindowSize = int64(2 * 60 * 1000 * 1000 * 1000)
+	return ds
+}
+
+// Calculate bandwidth in MB/sec. Query the database, and find
+// all recently completed downloaded chunks.
+func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
+	if timeWindowNanoSec < 1000 {
+		// sanity check; if the interval is very short, just return zero.
+		return 0.0
+	}
+
+	// Time and time window measured in nano seconds
+	now := time.Now().UnixNano()
+	lowerBound := now - timeWindowNanoSec
+
+	query := fmt.Sprintf(
+		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE download_done_time > %d",
+		lowerBound)
+	bytesDownloadedInTimeWindow := queryDBIntegerResult(query, ds.DBFname)
+
+	// convert to megabytes downloaded divided by seconds
+	mbDownloaded := float64(bytesDownloadedInTimeWindow) / float64(1024 * 1024)
+	timeDeltaSec := float64(timeWindowNanoSec) / float64(1000 * 1000 * 1000)
+	return mbDownloaded / timeDeltaSec
+}
+
+// Report on progress so far
+func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string {
+	// query the current progress
+	ds.NumBytesComplete = queryDBIntegerResult(
+		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size",
+		ds.DBFname)
+	ds.NumPartsComplete = queryDBIntegerResult(
+		"SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size",
+		ds.DBFname)
+
+	// calculate bandwitdh
+	bandwidthMBSec := calcBandwidth(ds, timeWindowNanoSec)
+
+	desc := fmt.Sprintf("%.1f MB/sec\t%d/%d MB\t%d/%d Parts Downloaded and written to disk\n",
+		bandwidthMBSec, b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts)
+	return desc
+}
+
+// A loop that reports on download progress periodically.
+func downloadProgressContinuous(ds *DownloadStatus) {
+	// Start time of the measurements, in nano seconds
+	startTime := time.Now()
+
+	for ; ds.NumPartsComplete < ds.NumParts ; {
+		// Sleep for a number of seconds, so as to not flood the screen
+		// with messages. This also substantially limits the number
+		// of database queries.
+		time.Sleep(ds.ProgressInterval)
+
+		// If we just started the measurements, we have a short
+		// history to examine. Limit the window size accordingly.
+		now := time.Now()
+		deltaNanoSec := now.UnixNano() - startTime.UnixNano()
+		if (deltaNanoSec > ds.MaxWindowSize) {
+			deltaNanoSec = ds.MaxWindowSize
+		}
+		desc := DownloadProgressOneTime(ds, deltaNanoSec)
+		fmt.Printf(desc)
+	}
+}
 
 func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sync.WaitGroup) {
+	const secondsInYear int = 60 * 60 * 24 * 365
 	for j := range jobs {
 		if _, ok := j.urls[j.part.FileID]; !ok {
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
@@ -422,7 +500,6 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 			mutex.Unlock()
 		}
 		recoverer(10, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
-		fmt.Printf("%s\r", DownloadProgress(j.manifestFileName))
 	}
 	wg.Done()
 }
@@ -476,7 +553,8 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
-		err = rows.Scan(&p.FileID, &p.Project, &p.FileName, &p.Folder, &p.PartID, &p.MD5, &p.Size, &p.BlockSize, &p.BytesFetched)
+		err = rows.Scan(&p.FileID, &p.Project, &p.FileName, &p.Folder, &p.PartID, &p.MD5, &p.Size,
+			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
 		j.manifestFileName = fname
@@ -495,6 +573,9 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 		wg.Add(1)
 		go worker(w, jobs, token, mutex, &wg)
 	}
+
+	ds := InitDownloadStatus(fname)
+	go downloadProgressContinuous(&ds)
 	wg.Wait()
 	fmt.Println("")
 }
@@ -515,7 +596,8 @@ func CheckFileIntegrity(fname string, opts Opts) {
 
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
-		err = rows.Scan(&p.FileID, &p.Project, &p.FileName, &p.Folder, &p.PartID, &p.MD5, &p.Size, &p.BlockSize, &p.BytesFetched)
+		err = rows.Scan(&p.FileID, &p.Project, &p.FileName, &p.Folder, &p.PartID, &p.MD5, &p.Size,
+			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
 		j.manifestFileName = fname
@@ -549,7 +631,10 @@ func UpdateDBPart(manifestFileName string, p DBPart) {
 	check(err)
 	defer tx.Commit()
 
-	_, err = tx.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = %d WHERE file_id = '%s' AND part_id = '%d'", p.Size, p.FileID, p.PartID))
+	now := time.Now().UnixNano()
+	_, err = tx.Exec(fmt.Sprintf(
+		"UPDATE manifest_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
+		p.Size, now, p.FileID, p.PartID))
 	check(err)
 
 }
@@ -565,7 +650,9 @@ func ResetDBPart(manifestFileName string, p DBPart) {
 	check(err)
 	defer tx.Commit()
 
-	_, err = tx.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = 0 WHERE file_id = '%s' AND part_id = '%d'", p.FileID, p.PartID))
+	_, err = tx.Exec(fmt.Sprintf(
+		"UPDATE manifest_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s' AND part_id = '%d'",
+		p.FileID, p.PartID))
 	check(err)
 
 }
@@ -581,9 +668,10 @@ func ResetDBFile(manifestFileName string, p DBPart) {
 	check(err)
 	defer tx.Commit()
 
-	_, err = tx.Exec(fmt.Sprintf("UPDATE manifest_stats SET bytes_fetched = 0 WHERE file_id = '%s'", p.FileID))
+	_, err = tx.Exec(fmt.Sprintf(
+		"UPDATE manifest_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
+		p.FileID))
 	check(err)
-
 }
 
 // DownloadDBPart ...
@@ -593,10 +681,12 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	check(err)
 	headers := make(map[string]string)
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1)
+
 	// TODO: Avoid locking here?
 	mutex.Lock()
 	u := urls[p.FileID]
 	mutex.Unlock()
+
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
