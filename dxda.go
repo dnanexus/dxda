@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"database/sql"
@@ -200,6 +202,24 @@ type DXPart struct {
 	Size int    `json:"size"`
 }
 
+// Probably a better way to do this :)
+func queryDBIntegerResult(query, dbFname string) int {
+	statsFname := dbFname + "?_busy_timeout=60000&cache=shared&mode=rc"
+
+	db, err := sql.Open("sqlite3", statsFname)
+	check(err)
+	defer db.Close()
+
+	rows, err := db.Query(query)
+	check(err)
+	var cnt int
+	rows.Next()
+	rows.Scan(&cnt)
+	rows.Close()
+
+	return cnt
+}
+
 // ReadManifest ...
 func ReadManifest(fname string) Manifest {
 	bzdata, err := ioutil.ReadFile(fname)
@@ -211,6 +231,64 @@ func ReadManifest(fname string) Manifest {
 	json.Unmarshal(data, &m)
 	return m
 }
+
+
+// write the number of bytes as a human readable string
+func DiskSpaceString(numBytes uint64) string {
+	//KB = 1024
+	const MB = 1024 * 1024
+	const GB = 1024 * 1024 * 1024
+	const TB = 1024 * 1024 * 1024 * 1024
+
+	tb := float64(numBytes) / float64(TB)
+	if tb >= 1.0 {
+		return fmt.Sprintf("%.1fTB", tb)
+	}
+
+	gb := float64(numBytes) / float64(GB)
+	if gb >= 1.0 {
+		return fmt.Sprintf("%.1fGB", gb)
+	}
+
+	mb := float64(numBytes) / float64(MB)
+	if mb >= 1.0 {
+		return fmt.Sprintf("%.1fMB", mb)
+	}
+	return fmt.Sprintf("%dBytes", numBytes)
+}
+
+
+// Check that we have enough disk space for all downloaded files
+func CheckDiskSpace(fname string) error {
+	// Calculate total disk space required. To get an accurate number,
+	// query the database, and sum the space for missing pieces.
+	//
+	dbFname := fname + ".stats.db"
+	totalSizeBytes := uint64(queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats WHERE bytes_fetched != size",
+		dbFname))
+
+	// Find how much local disk space is available
+	var stat syscall.Statfs_t
+	wd, err := os.Getwd()
+	check(err)
+	err2 := syscall.Statfs(wd, &stat)
+	check(err2)
+
+	// Available blocks * size per block = available space in bytes
+	availableBytes := stat.Bavail * uint64(stat.Bsize)
+	if availableBytes < totalSizeBytes {
+		desc := fmt.Sprintf("Not enough disk space, available = %s, required = %s",
+			DiskSpaceString(availableBytes),
+			DiskSpaceString(totalSizeBytes))
+		return errors.New(desc)
+	}
+	fmt.Printf("Required disk space = %s, available = %s\n",
+		DiskSpaceString(totalSizeBytes),
+		DiskSpaceString(availableBytes))
+	return nil
+}
+
+
 
 // DXDownloadURL ...
 type DXDownloadURL struct {
@@ -311,24 +389,6 @@ type JobInfo struct {
 	wg               *sync.WaitGroup
 	urls             map[string]DXDownloadURL
 	tmpid            int
-}
-
-// Probably a better way to do this :)
-func queryDBIntegerResult(query, dbFname string) int {
-	statsFname := dbFname + "?_busy_timeout=60000&cache=shared&mode=rc"
-
-	db, err := sql.Open("sqlite3", statsFname)
-	check(err)
-	defer db.Close()
-
-	rows, err := db.Query(query)
-	check(err)
-	var cnt int
-	rows.Next()
-	rows.Scan(&cnt)
-	rows.Close()
-
-	return cnt
 }
 
 func b2MB(bytes int) int { return bytes / 1000000 }
