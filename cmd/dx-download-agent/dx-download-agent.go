@@ -41,6 +41,10 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
 		dxda.CreateManifestDB(fname)
 	}
+	if err := dxda.CheckDiskSpace(fname); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 	dxda.DownloadManifestDB(fname, token, opts)
 	return subcommands.ExitSuccess
 }
