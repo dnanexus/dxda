@@ -13,7 +13,7 @@ To get started with `dx-download-agent`, download the the latest pre-compiled bi
 * `manifest_file`: A BZ2-compressed JSON manifest file that describes, at minimimum, the following information for a download, for example:
 
 ```json
-{ 
+{
   "project-AAAA": [
     {
       "id": "file-XXXX",
@@ -36,8 +36,7 @@ To start a download process, first [generate a DNAnexus API token](https://wiki.
 export DX_API_TOKEN=<INSERT API TOKEN HERE>
 ```
 
-If no API token is provided, the download agent will look to the `~/.dnanexus_config/environment.json` also used by the [dx-toolkit](https://github.com/dnanexus/dx-toolkit),
-
+If no API token is provided, the download agent will look to the `~/.dnanexus_config/environment.json` also used by the [dx-toolkit](https://github.com/dnanexus/dx-toolkit).
 
 
 To start the download:
@@ -48,10 +47,13 @@ Obtained token using ~/.dnanexus_config/environment.json
 100/200 MB      11/17 Parts Downloaded
 ```
 
+Prior to starting the data transfer, a check is made to see that there is sufficient disk space for the entire list of files. If not, an error
+is reported, and nothing is downloaded.
+
 You can query the progress of an existing download in a separate terminal
 
 ```
-dx-download-agent progress exome_bams_manifest.json.bz2 
+dx-download-agent progress exome_bams_manifest.json.bz2
 ```
 
 and you will get a brief summary of the status the downloads:
@@ -129,8 +131,8 @@ docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/d
 
 This repository can be used directly as a Go module as well.  In the `cmd/dx-download-agent` directory, the `dx-download-agent.go` file is an example of how it can be used.
 
-For developing and experimenting with the source, the [Dockerfile](https://github.com/dnanexus/dxda/blob/master/Dockerfile) in this repository may be a good start. 
+For developing and experimenting with the source, the [Dockerfile](https://github.com/dnanexus/dxda/blob/master/Dockerfile) in this repository may be a good start.
 
 ## Additional notes
 
-* Only objects of [class File](https://wiki.dnanexus.com/API-Specification-v1.0.0/Introduction-to-Data-Object-Classes) can be downloaded. 
+* Only objects of [class File](https://wiki.dnanexus.com/API-Specification-v1.0.0/Introduction-to-Data-Object-Classes) can be downloaded.
