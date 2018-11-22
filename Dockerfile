@@ -24,6 +24,7 @@ RUN mkdir -p /builds/dx-download-agent-osx /builds/dx-download-agent-linux && \
     #chmod a+x dx-download-agent-osx/dx-download-agent && \
     tar -cvf dx-download-agent-linux.tar dx-download-agent-linux && \
     #tar -cvf dx-download-agent-osx.tar dx-download-agent-osx
+    cd ..
 
 
 
