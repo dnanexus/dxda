@@ -232,7 +232,6 @@ func ReadManifest(fname string) Manifest {
 	return m
 }
 
-
 // write the number of bytes as a human readable string
 func DiskSpaceString(numBytes uint64) string {
 	//KB = 1024
@@ -256,7 +255,6 @@ func DiskSpaceString(numBytes uint64) string {
 	}
 	return fmt.Sprintf("%dBytes", numBytes)
 }
-
 
 // Check that we have enough disk space for all downloaded files
 func CheckDiskSpace(fname string) error {
@@ -288,8 +286,6 @@ func CheckDiskSpace(fname string) error {
 	return nil
 }
 
-
-
 // DXDownloadURL ...
 type DXDownloadURL struct {
 	URL     string            `json:"url"`
@@ -304,16 +300,16 @@ func md5str(body []byte) string {
 
 // DBPart ...
 type DBPart struct {
-	FileID       string
-	Project      string
-	FileName     string
-	Folder       string
-	PartID       int
-	MD5          string
-	Size         int
-	BlockSize    int
-	BytesFetched int
-	DownloadDoneTime int64    // The time when it completed downloading
+	FileID           string
+	Project          string
+	FileName         string
+	Folder           string
+	PartID           int
+	MD5              string
+	Size             int
+	BlockSize        int
+	BytesFetched     int
+	DownloadDoneTime int64 // The time when it completed downloading
 }
 
 // CreateManifestDB ...
@@ -396,9 +392,9 @@ type JobInfo struct {
 func b2MB(bytes int) int { return bytes / (1024 * 1024) }
 
 type DownloadStatus struct {
-	DBFname string
-	NumParts int
-	NumBytes int
+	DBFname          string
+	NumParts         int
+	NumBytes         int
 	NumPartsComplete int
 	NumBytesComplete int
 
@@ -440,8 +436,8 @@ func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
 	bytesDownloadedInTimeWindow := queryDBIntegerResult(query, ds.DBFname)
 
 	// convert to megabytes downloaded divided by seconds
-	mbDownloaded := float64(bytesDownloadedInTimeWindow) / float64(1024 * 1024)
-	timeDeltaSec := float64(timeWindowNanoSec) / float64(1000 * 1000 * 1000)
+	mbDownloaded := float64(bytesDownloadedInTimeWindow) / float64(1024*1024)
+	timeDeltaSec := float64(timeWindowNanoSec) / float64(1000*1000*1000)
 	return mbDownloaded / timeDeltaSec
 }
 
@@ -468,7 +464,7 @@ func downloadProgressContinuous(ds *DownloadStatus) {
 	// Start time of the measurements, in nano seconds
 	startTime := time.Now()
 
-	for ; ds.NumPartsComplete < ds.NumParts ; {
+	for ds.NumPartsComplete < ds.NumParts {
 		// Sleep for a number of seconds, so as to not flood the screen
 		// with messages. This also substantially limits the number
 		// of database queries.
@@ -478,7 +474,7 @@ func downloadProgressContinuous(ds *DownloadStatus) {
 		// history to examine. Limit the window size accordingly.
 		now := time.Now()
 		deltaNanoSec := now.UnixNano() - startTime.UnixNano()
-		if (deltaNanoSec > ds.MaxWindowSize) {
+		if deltaNanoSec > ds.MaxWindowSize {
 			deltaNanoSec = ds.MaxWindowSize
 		}
 		desc := DownloadProgressOneTime(ds, deltaNanoSec)
@@ -492,7 +488,9 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 		if _, ok := j.urls[j.part.FileID]; !ok {
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
-			_, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
+
+			// _, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			_, body := apirecoverer(10, DXAPI, token, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
 			mutex.Lock()
@@ -529,6 +527,27 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 		}
 	}()
 	downloadPart(manifestFileName, p, wg, urls, mutex)
+}
+
+// TODO: Generalize this better
+
+type apicaller func(token, api string, payload string) (status string, body []byte)
+
+func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload string) (status string, body []byte) {
+	defer func() {
+		// The goroutine has panicked. Catch the error code, print it,
+		// and try downloading the part again. This can be retried up to [maxPanics] times.
+		if err := recover(); err != nil {
+			fmt.Println(err)
+			if maxPanics == 0 {
+				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
+			} else {
+				fmt.Println("Attempting to gracefully recover from API call error.")
+				apirecoverer(maxPanics-1, dxapi, token, api, payload)
+			}
+		}
+	}()
+	return dxapi(token, api, payload)
 }
 
 // DownloadManifestDB ...
