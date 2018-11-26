@@ -163,13 +163,13 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 		defer resp.Body.Close()
 		status = resp.Status
 		body, _ = ioutil.ReadAll(resp.Body)
-
+		if status == "503" {
+			continue
+		}
 		if !strings.HasPrefix(status, "2") {
 			urlFailure(requestType, url, status)
 		}
-		if status != "503" {
-			break
-		}
+		break
 	}
 	return status, body
 }
