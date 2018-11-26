@@ -163,6 +163,7 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 		defer resp.Body.Close()
 		status = resp.Status
 		if status == "503" {
+			time.Sleep(5 * time.Second)
 			continue
 		}
 		body, _ = ioutil.ReadAll(resp.Body)
