@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -94,6 +95,14 @@ func GetToken() (string, string) {
 	return "", ""
 }
 
+// https://mrekucci.blogspot.com/2015/07/dont-abuse-mathmax-mathmin.html
+func Min(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
+
 func makeRequestWithHeadersFail(requestType string, url string, headers map[string]string, data []byte) (status string, body []byte) {
 	const minRetryTime = 1   // seconds
 	const maxRetryTime = 120 // seconds
@@ -152,6 +161,8 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 	}
 
 	// Perpetually retry on 503 (e.g. platform downtime/throttling)
+	var numAttempts uint
+	numAttempts = 1
 	for {
 		req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
 		check(err)
@@ -162,8 +173,18 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 		check(err)
 		status = resp.Status
 		if resp.StatusCode == 503 {
-			time.Sleep(5 * time.Second)
+			var waitTime = 1
+			// If a 'retry-after' header exists, use it
+			if resp.Header.Get("retry-after") != "" {
+				waitTime, err = strconv.Atoi(resp.Header.Get("retry-after"))
+				check(err)
+			} else { // Otherwise, exponentially backoff up to a reasonable amount
+				const reasonableMaxWaitTime = 30 * 60
+				waitTime = Min(reasonableMaxWaitTime, 1<<numAttempts)
+			}
+			time.Sleep(time.Duration(waitTime) * time.Second)
 			resp.Body.Close()
+			numAttempts++
 			continue
 		}
 		body, _ = ioutil.ReadAll(resp.Body)
