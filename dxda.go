@@ -95,6 +95,7 @@ func GetToken() (string, string) {
 	return "", ""
 }
 
+// Min ...
 // https://mrekucci.blogspot.com/2015/07/dont-abuse-mathmax-mathmin.html
 func Min(x, y int) int {
 	if x < y {
@@ -264,6 +265,7 @@ func ReadManifest(fname string) Manifest {
 	return m
 }
 
+// DiskSpaceString ...
 // write the number of bytes as a human readable string
 func DiskSpaceString(numBytes uint64) string {
 	//KB = 1024
@@ -288,6 +290,7 @@ func DiskSpaceString(numBytes uint64) string {
 	return fmt.Sprintf("%dBytes", numBytes)
 }
 
+// CheckDiskSpace ...
 // Check that we have enough disk space for all downloaded files
 func CheckDiskSpace(fname string) error {
 	// Calculate total disk space required. To get an accurate number,
@@ -423,6 +426,7 @@ type JobInfo struct {
 
 func b2MB(bytes int) int { return bytes / (1024 * 1024) }
 
+// DownloadStatus ...
 type DownloadStatus struct {
 	DBFname          string
 	NumParts         int
@@ -438,6 +442,7 @@ type DownloadStatus struct {
 	MaxWindowSize int64
 }
 
+// InitDownloadStatus ...
 func InitDownloadStatus(fname string) DownloadStatus {
 	// total amounts to download, calculated once
 	dbFname := fname + ".stats.db"
@@ -473,6 +478,7 @@ func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
 	return mbDownloaded / timeDeltaSec
 }
 
+// DownloadProgressOneTime ...
 // Report on progress so far
 func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string {
 	// query the current progress
