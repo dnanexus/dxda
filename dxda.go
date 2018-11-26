@@ -267,11 +267,12 @@ func ReadManifest(fname string) Manifest {
 
 // DiskSpaceString ...
 // write the number of bytes as a human readable string
+// Following IEC conventions here: https://en.wikipedia.org/wiki/Megabyte
 func DiskSpaceString(numBytes uint64) string {
-	//KB = 1024
-	const MB = 1024 * 1024
-	const GB = 1024 * 1024 * 1024
-	const TB = 1024 * 1024 * 1024 * 1024
+	const KB = 1000
+	const MB = 1000 * KB
+	const GB = 1000 * MB
+	const TB = 1000 * GB
 
 	tb := float64(numBytes) / float64(TB)
 	if tb >= 1.0 {
@@ -481,7 +482,7 @@ func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
 // DownloadProgressOneTime ...
 // Report on progress so far
 func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string {
-	// query the current progress
+	// query the current progrAddess
 	ds.NumBytesComplete = queryDBIntegerResult(
 		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size",
 		ds.DBFname)
