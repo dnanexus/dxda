@@ -162,7 +162,7 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 		check(err)
 		defer resp.Body.Close()
 		status = resp.Status
-		if status == "503" {
+		if resp.StatusCode == 503 {
 			time.Sleep(5 * time.Second)
 			continue
 		}
