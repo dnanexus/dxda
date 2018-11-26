@@ -190,6 +190,8 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 		body, _ = ioutil.ReadAll(resp.Body)
 		resp.Body.Close()
 
+		// TODO: Investigate more sophsticated handling of these error codes ala
+		// https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
 		if !strings.HasPrefix(status, "2") {
 			urlFailure(requestType, url, status)
 		}
