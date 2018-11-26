@@ -151,19 +151,25 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 		}
 	}
 
-	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
-	check(err)
-	for header, value := range headers {
-		req.Header.Set(header, value)
-	}
-	resp, err := client.Do(req)
-	check(err)
-	defer resp.Body.Close()
-	status = resp.Status
-	body, _ = ioutil.ReadAll(resp.Body)
+	// Perpetually retry on 503 (e.g. platform downtime/throttling)
+	for {
+		req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
+		check(err)
+		for header, value := range headers {
+			req.Header.Set(header, value)
+		}
+		resp, err := client.Do(req)
+		check(err)
+		defer resp.Body.Close()
+		status = resp.Status
+		body, _ = ioutil.ReadAll(resp.Body)
 
-	if !strings.HasPrefix(status, "2") {
-		urlFailure(requestType, url, status)
+		if !strings.HasPrefix(status, "2") {
+			urlFailure(requestType, url, status)
+		}
+		if status != "503" {
+			break
+		}
 	}
 	return status, body
 }
