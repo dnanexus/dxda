@@ -31,6 +31,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
 
+// Move mutex to a global variable since it is now used for any DB query
+var mutex = &sync.Mutex{}
+
 func check(e error) {
 	if e != nil {
 		panic(e)
@@ -237,6 +240,7 @@ type DXPart struct {
 
 // Probably a better way to do this :)
 func queryDBIntegerResult(query, dbFname string) int {
+	mutex.Lock()
 	statsFname := dbFname + "?_busy_timeout=60000&cache=shared&mode=rc"
 
 	db, err := sql.Open("sqlite3", statsFname)
@@ -249,6 +253,7 @@ func queryDBIntegerResult(query, dbFname string) int {
 	rows.Next()
 	rows.Scan(&cnt)
 	rows.Close()
+	mutex.Unlock()
 
 	return cnt
 }
@@ -626,7 +631,6 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	rows.Close()
 	db.Close()
 
-	var mutex = &sync.Mutex{}
 	for w := 1; w <= opts.NumThreads; w++ {
 		wg.Add(1)
 		go worker(w, jobs, token, mutex, &wg)
