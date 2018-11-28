@@ -33,6 +33,7 @@ import (
 
 // Move mutex to a global variable since it is now used for any DB query
 var mutex = &sync.Mutex{}
+var ds DownloadStatus
 
 func check(e error) {
 	if e != nil {
@@ -499,7 +500,7 @@ func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string
 	// calculate bandwitdh
 	bandwidthMBSec := calcBandwidth(ds, timeWindowNanoSec)
 
-	desc := fmt.Sprintf("%.1f MB written to disk in the last %ds\t%d/%d MB\t%d/%d Parts\n",
+	desc := fmt.Sprintf("%.1f MB written to disk in the last %ds\t%d/%d MB\t%d/%d Parts\r",
 		bandwidthMBSec, timeWindowNanoSec/1e9, b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts)
 	return desc
 }
@@ -637,8 +638,8 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 		go worker(w, jobs, token, mutex, &wg)
 	}
 
-	ds := InitDownloadStatus(fname)
-	go downloadProgressContinuous(&ds)
+	ds = InitDownloadStatus(fname)
+	//go downloadProgressContinuous(&ds)
 	wg.Wait()
 	fmt.Println(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
 
@@ -768,6 +769,8 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	mutex.Lock()
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()
+	fmt.Println(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
+
 }
 
 // CheckDBPart ...
