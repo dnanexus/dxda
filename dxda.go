@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -602,6 +603,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	fmt.Printf("Preparing files for download\n")
 	urls := PrepareFilesForDownload(m, token)
 	statsFname := fname + ".stats.db"
+	runtime.GOMAXPROCS(opts.NumThreads)
 
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 
