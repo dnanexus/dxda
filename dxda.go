@@ -542,7 +542,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 			j.urls[j.part.FileID] = u
 			mutex.Unlock()
 		}
-		recoverer(10, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
+		recoverer(-1, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
 	}
 	wg.Done()
 }
