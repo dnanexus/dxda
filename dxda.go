@@ -110,7 +110,8 @@ func Min(x, y int) int {
 func makeRequestWithHeadersFail(requestType string, url string, headers map[string]string, data []byte) (status string, body []byte) {
 	const minRetryTime = 1   // seconds
 	const maxRetryTime = 120 // seconds
-	const maxRetryCount = 10
+	//const maxRetryCount = 10
+	const maxRetryCount = 1 // Temporarily test whether nil pointer issue in retryablehttp can be solved with this
 	const userAgent = "DNAnexus Download Agent (v. 0.1)"
 
 	var client *retryablehttp.Client
