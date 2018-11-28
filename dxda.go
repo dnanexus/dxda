@@ -111,8 +111,7 @@ func Min(x, y int) int {
 func makeRequestWithHeadersFail(requestType string, url string, headers map[string]string, data []byte) (status string, body []byte) {
 	const minRetryTime = 1   // seconds
 	const maxRetryTime = 120 // seconds
-	//const maxRetryCount = 10
-	const maxRetryCount = 1 // Temporarily test whether nil pointer issue in retryablehttp can be solved with this
+	const maxRetryCount = 10
 	const userAgent = "DNAnexus Download Agent (v. 0.1)"
 
 	var client *retryablehttp.Client
@@ -641,7 +640,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	ds = InitDownloadStatus(fname)
 	//go downloadProgressContinuous(&ds)
 	wg.Wait()
-	fmt.Println(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
+	fmt.Printf(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
 
 	fmt.Println("")
 }
@@ -769,7 +768,7 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	mutex.Lock()
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()
-	fmt.Println(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
+	fmt.Printf(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
 
 }
 
