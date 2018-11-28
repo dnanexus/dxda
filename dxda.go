@@ -498,8 +498,8 @@ func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string
 	// calculate bandwitdh
 	bandwidthMBSec := calcBandwidth(ds, timeWindowNanoSec)
 
-	desc := fmt.Sprintf("%.1f MB/sec\t%d/%d MB\t%d/%d Parts Downloaded and written to disk\n",
-		bandwidthMBSec, b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts)
+	desc := fmt.Sprintf("%.1f MB written to disk in the last %ds\t%d/%d MB\t%d/%d Parts\n",
+		bandwidthMBSec, timeWindowNanoSec/1e9, b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts)
 	return desc
 }
 
@@ -639,6 +639,8 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	ds := InitDownloadStatus(fname)
 	go downloadProgressContinuous(&ds)
 	wg.Wait()
+	fmt.Println(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
+
 	fmt.Println("")
 }
 
