@@ -44,8 +44,8 @@ func check(e error) {
 }
 
 func urlFailure(requestType string, url string, status string) {
-	log.Fatalln(fmt.Errorf("%s request to '%s' failed with status %s", requestType, url, status))
 	fmt.Println("ERROR when attempting API call.  Please see <manifest-file-name>.download.log for more details.")
+	log.Fatalln(fmt.Errorf("%s request to '%s' failed with status %s", requestType, url, status))
 }
 
 func printLogAndOut(str string) {
