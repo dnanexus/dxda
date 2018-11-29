@@ -608,7 +608,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	// TODO: Update to not require manifest structure read into memory
 	m := ReadManifest(fname)
 	logfname := fname + ".download.log"
-	logfile, err := os.OpenFile(logfname, os.O_CREATE|os.O_APPEND, 0644)
+	logfile, err := os.OpenFile(logfname, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	check(err)
 	defer logfile.Close()
 	log.SetOutput(logfile)
