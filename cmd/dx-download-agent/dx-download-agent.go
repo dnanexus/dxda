@@ -124,9 +124,5 @@ func main() {
 
 	flag.Parse()
 	ctx := context.Background()
-	exitCode := int(subcommands.Execute(ctx))
-	if exitCode != 0 {
-		fmt.Printf("ERROR: Non-zero exit code detected. Please see the '<mainfest-file-name>.download.log' for more details.")
-	}
-	os.Exit(exitCode)
+	os.Exit(int(subcommands.Execute(ctx)))
 }
