@@ -574,7 +574,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 			if maxPanics == 0 {
 				panic("Too many attempts to restart downloading part. Please contact support@dnanexus.com for assistance.")
 			} else {
-				printLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.")
+				printLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
 				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
 			}
 		}
@@ -595,7 +595,7 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 			if maxPanics == 0 {
 				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
 			} else {
-				printLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.")
+				printLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
 				apirecoverer(maxPanics-1, dxapi, token, api, payload)
 			}
 		}
@@ -615,7 +615,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 
 	// TODO Log network settings and other helpful info for debugging
 
-	printLogAndOut("Logging detailed output to: " + logfname)
+	printLogAndOut("Logging detailed output to: " + logfname + "\n")
 	printLogAndOut("Preparing files for download\n")
 	urls := PrepareFilesForDownload(m, token)
 	statsFname := fname + ".stats.db"
