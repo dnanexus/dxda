@@ -71,7 +71,7 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	}
 	fname := f.Args()[0]
 	ds := dxda.InitDownloadStatus(fname)
-	fmt.Println(dxda.DownloadProgressOneTime(&ds, 60 * 1000 * 1000 * 1000))
+	fmt.Println(dxda.DownloadProgressOneTime(&ds, 60*1000*1000*1000))
 	return subcommands.ExitSuccess
 }
 
@@ -124,5 +124,9 @@ func main() {
 
 	flag.Parse()
 	ctx := context.Background()
-	os.Exit(int(subcommands.Execute(ctx)))
+	exitCode := int(subcommands.Execute(ctx))
+	if exitCode != 0 {
+		fmt.Printf("ERROR: Non-zero exit code detected. Please see the '<mainfest-file-name>.download.log' for more details.")
+	}
+	os.Exit(exitCode)
 }
