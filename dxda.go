@@ -659,8 +659,8 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	//go downloadProgressContinuous(&ds)
 	wg.Wait()
 	printLogAndOut(DownloadProgressOneTime(&ds, 60*1000*1000*1000) + "\n")
-	printLogAndOut("Download completed successfully.")
-	printLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.")
+	printLogAndOut("Download completed successfully.\n")
+	printLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
 
 }
 
