@@ -32,6 +32,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
 
+// TODO: Get rid of these globals and pass vars around as necessary
 // Move mutex to a global variable since it is now used for any DB query
 var mutex = &sync.Mutex{}
 var ds DownloadStatus
@@ -44,6 +45,11 @@ func check(e error) {
 
 func urlFailure(requestType string, url string, status string) {
 	log.Fatalln(fmt.Errorf("%s request to '%s' failed with status %s", requestType, url, status))
+}
+
+func printLogAndOut(str string) {
+	log.Printf(str)
+	fmt.Printf(str)
 }
 
 // Utilities to interact with the DNAnexus API
@@ -144,7 +150,7 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 
 		// Append our cert to the system pool
 		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
-			fmt.Println("No certs appended, using system certs only")
+			log.Println("No certs appended, using system certs only")
 		}
 
 		// Trust the augmented cert pool in our client
@@ -323,9 +329,10 @@ func CheckDiskSpace(fname string) error {
 			DiskSpaceString(totalSizeBytes))
 		return errors.New(desc)
 	}
-	fmt.Printf("Required disk space = %s, available = %s\n",
+	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s\n",
 		DiskSpaceString(totalSizeBytes),
 		DiskSpaceString(availableBytes))
+	printLogAndOut(diskSpaceStr)
 	return nil
 }
 
@@ -500,7 +507,7 @@ func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string
 	// calculate bandwitdh
 	bandwidthMBSec := calcBandwidth(ds, timeWindowNanoSec)
 
-	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (%.1f MB written to disk in the last %ds)\r",
+	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (%.1f MB written to disk in the last %ds)",
 		b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts, bandwidthMBSec, timeWindowNanoSec/1e9)
 	return desc
 }
@@ -563,11 +570,11 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 		// The goroutine has panicked. Catch the error code, print it,
 		// and try downloading the part again. This can be retried up to [maxPanics] times.
 		if err := recover(); err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			if maxPanics == 0 {
 				panic("Too many attempts to restart downloading part. Please contact support@dnanexus.com for assistance.")
 			} else {
-				fmt.Println("Attempting to gracefully recover from error.")
+				printLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.")
 				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
 			}
 		}
@@ -584,11 +591,11 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 		// The goroutine has panicked. Catch the error code, print it,
 		// and try downloading the part again. This can be retried up to [maxPanics] times.
 		if err := recover(); err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			if maxPanics == 0 {
 				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
 			} else {
-				fmt.Println("Attempting to gracefully recover from API call error.")
+				printLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.")
 				apirecoverer(maxPanics-1, dxapi, token, api, payload)
 			}
 		}
@@ -600,12 +607,21 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 func DownloadManifestDB(fname, token string, opts Opts) {
 	// TODO: Update to not require manifest structure read into memory
 	m := ReadManifest(fname)
-	fmt.Printf("Preparing files for download\n")
+	logfname := fname + ".download.log"
+	logfile, err := os.OpenFile(logfname, os.O_CREATE|os.O_APPEND, 0644)
+	check(err)
+	defer logfile.Close()
+	log.SetOutput(logfile)
+
+	// TODO Log network settings and other helpful info for debugging
+
+	printLogAndOut("Logging detailed output to: " + logfname)
+	printLogAndOut("Preparing files for download\n")
 	urls := PrepareFilesForDownload(m, token)
 	statsFname := fname + ".stats.db"
 	runtime.GOMAXPROCS(opts.NumThreads)
 
-	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
+	printLogAndOut(fmt.Sprintf("Downloading files using %d threads\n", opts.NumThreads))
 
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -642,9 +658,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	ds = InitDownloadStatus(fname)
 	//go downloadProgressContinuous(&ds)
 	wg.Wait()
-	fmt.Printf(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
-
-	fmt.Println("")
+	printLogAndOut(DownloadProgressOneTime(&ds, 60*1000*1000*1000) + "\n")
 }
 
 // CheckFileIntegrity ...
@@ -759,7 +773,9 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	}
 	_, body := makeRequestWithHeadersFail("GET", u.URL+"/"+p.Project, headers, []byte("{}"))
 	if md5str(body) != p.MD5 {
-		panic(fmt.Sprintf("MD5 string of part ID %d does not match stored MD5sum", p.PartID))
+		md5Error := fmt.Sprintf("MD5 string of part ID %d does not match stored MD5sum. Retrying.", p.PartID)
+		log.Println(md5Error)
+		panic(md5Error)
 	}
 	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
 	check(err)
@@ -770,7 +786,9 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	mutex.Lock()
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()
-	fmt.Printf(DownloadProgressOneTime(&ds, 60*1000*1000*1000))
+	progressStr := DownloadProgressOneTime(&ds, 60*1000*1000*1000)
+	fmt.Printf(progressStr + "\r")
+	log.Printf(progressStr + "\n")
 
 }
 
