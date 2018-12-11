@@ -48,7 +48,8 @@ func urlFailure(requestType string, url string, status string) {
 	log.Fatalln(fmt.Errorf("%s request to '%s' failed with status %s", requestType, url, status))
 }
 
-func printLogAndOut(str string) {
+// PrintLogAndOut ...
+func PrintLogAndOut(str string) {
 	log.Printf(str)
 	fmt.Printf(str)
 }
@@ -332,7 +333,7 @@ func CheckDiskSpace(fname string) error {
 	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s\n",
 		DiskSpaceString(totalSizeBytes),
 		DiskSpaceString(availableBytes))
-	printLogAndOut(diskSpaceStr)
+	PrintLogAndOut(diskSpaceStr)
 	return nil
 }
 
@@ -558,7 +559,8 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	for j := range jobs {
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
-		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
+		// TODO: Get rid of temporary space padding fix for carriage returns
+		fmt.Printf("%s:%d                     \r", j.part.FileName, j.part.PartID)
 	}
 	wg.Done()
 }
@@ -574,7 +576,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 			if maxPanics == 0 {
 				panic("Too many attempts to restart downloading part. Please contact support@dnanexus.com for assistance.")
 			} else {
-				printLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
+				PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
 				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
 			}
 		}
@@ -595,7 +597,7 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 			if maxPanics == 0 {
 				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
 			} else {
-				printLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
+				PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
 				apirecoverer(maxPanics-1, dxapi, token, api, payload)
 			}
 		}
@@ -607,21 +609,15 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 func DownloadManifestDB(fname, token string, opts Opts) {
 	// TODO: Update to not require manifest structure read into memory
 	m := ReadManifest(fname)
-	logfname := fname + ".download.log"
-	logfile, err := os.OpenFile(logfname, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
-	check(err)
-	defer logfile.Close()
-	log.SetOutput(logfile)
 
 	// TODO Log network settings and other helpful info for debugging
 
-	printLogAndOut("Logging detailed output to: " + logfname + "\n")
-	printLogAndOut("Preparing files for download\n")
+	PrintLogAndOut("Preparing files for download\n")
 	urls := PrepareFilesForDownload(m, token)
 	statsFname := fname + ".stats.db"
 	runtime.GOMAXPROCS(opts.NumThreads)
 
-	printLogAndOut(fmt.Sprintf("Downloading files using %d threads\n", opts.NumThreads))
+	PrintLogAndOut(fmt.Sprintf("Downloading files using %d threads\n", opts.NumThreads))
 
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -658,9 +654,9 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	ds = InitDownloadStatus(fname)
 	//go downloadProgressContinuous(&ds)
 	wg.Wait()
-	printLogAndOut(DownloadProgressOneTime(&ds, 60*1000*1000*1000) + "\n")
-	printLogAndOut("Download completed successfully.\n")
-	printLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
+	PrintLogAndOut(DownloadProgressOneTime(&ds, 60*1000*1000*1000) + "\n")
+	PrintLogAndOut("Download completed successfully.\n")
+	PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
 
 }
 
@@ -790,7 +786,8 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()
 	progressStr := DownloadProgressOneTime(&ds, 60*1000*1000*1000)
-	fmt.Printf(progressStr + "\r")
+	// TODO: Get rid of this temporary space-padding fix for carriage returns
+	fmt.Printf(progressStr + "                     \r")
 	log.Printf(progressStr + "\n")
 
 }

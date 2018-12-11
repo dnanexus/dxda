@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 
 	// The dxda package should contain all core functionality
@@ -26,6 +27,12 @@ func (p *downloadCmd) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when downloading files")
 }
 
+func check(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
+
 func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	// TODO: Is there a generic way to do this using subcommands?
 	if len(f.Args()) == 0 {
@@ -33,8 +40,17 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		os.Exit(1)
 	}
 	fname := f.Args()[0]
+	logfname := fname + ".download.log"
+	logfile, err := os.OpenFile(logfname, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	check(err)
+	defer logfile.Close()
+	log.SetOutput(logfile)
+
+	dxda.PrintLogAndOut("Logging detailed output to: " + logfname + "\n")
+
 	token, method := dxda.GetToken()
-	fmt.Printf("Obtained token using %s\n", method)
+
+	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
