@@ -46,7 +46,6 @@ dx-download-agent download exome_bams_manifest.json.bz2
 Obtained token using environment
 Creating manifest database manifest.json.bz2.stats.db
 Required disk space = 1.2TB, available = 3.6TB
-2018/11/29 22:21:17 Required disk space = 1.2TB, available = 3.6TB
 Logging detailed output to: manifest.json.bz2.download.log
 Preparing files for download
 Downloading files using 8 threads
