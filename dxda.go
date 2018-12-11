@@ -560,7 +560,8 @@ func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *syn
 	for j := range jobs {
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
 		// TODO: Get rid of temporary space padding fix for carriage returns
-		fmt.Printf("%s:%d                     \r", j.part.FileName, j.part.PartID)
+		fmt.Printf("                                                                      \r")
+		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
 	}
 	wg.Done()
 }
@@ -787,7 +788,8 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	mutex.Unlock()
 	progressStr := DownloadProgressOneTime(&ds, 60*1000*1000*1000)
 	// TODO: Get rid of this temporary space-padding fix for carriage returns
-	fmt.Printf(progressStr + "                     \r")
+	fmt.Printf("                                                                      \r")
+	fmt.Printf(progressStr + "\r")
 	log.Printf(progressStr + "\n")
 
 }
