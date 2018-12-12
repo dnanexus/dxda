@@ -29,7 +29,7 @@ def main():
         for f in sorted(matches, key=lambda x: x['name']):
             lsline = "{}{}".format(f['folder'], f['name'])
             if args.long:
-                lsline = "{:10.4f} MB\t".format(r(float(fsize(f))/(1024*1024))) + lsline
+                lsline = "{:10.2f} MB\t".format(r(float(fsize(f))/(1024*1024))) + lsline
             print(lsline)
         print("")
         print("{} files total {} MB".format(len(matches), total_size/(1024*1024)))
