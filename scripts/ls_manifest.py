@@ -30,7 +30,7 @@ def main():
             fol = f['folder']
             if f['folder'][-1] != "/":
                 fol += "/"
-            lsline = "{}{}".format(f['folder'], f['name'])
+            lsline = "{}{}".format(fol, f['name'])
             if args.long:
                 lsline = "{:10.2f} MB\t".format(r(float(fsize(f))/(1024*1024))) + lsline
             print(lsline)
