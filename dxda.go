@@ -508,8 +508,9 @@ func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string
 	// calculate bandwitdh
 	bandwidthMBSec := calcBandwidth(ds, timeWindowNanoSec)
 
-	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (%.1f MB written to disk in the last %ds)",
+	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)",
 		b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts, bandwidthMBSec, timeWindowNanoSec/1e9)
+
 	return desc
 }
 
