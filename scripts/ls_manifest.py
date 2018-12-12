@@ -3,6 +3,10 @@ from pprint import pprint
 import json
 import bz2
 import re
+import math
+
+def r(v):
+    return math.ceil(v*100)/100
 
 
 def main():
@@ -25,7 +29,7 @@ def main():
         for f in sorted(matches, key=lambda x: x['name']):
             lsline = "{}{}".format(f['folder'], f['name'])
             if args.long:
-                lsline = lsline+"\t{}".format(fsize(f))
+                lsline = "{:10.4f} MB\t".format(r(float(fsize(f))/(1024*1024))) + lsline
             print(lsline)
         print("")
         print("{} files total {} MB".format(len(matches), total_size/(1024*1024)))
