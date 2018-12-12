@@ -27,6 +27,9 @@ def main():
         matches = [f for f in file_list if re.match(args.regex, f['name'])]
         total_size = sum([fsize(f) for f in matches])
         for f in sorted(matches, key=lambda x: x['name']):
+            fol = f['folder']
+            if f['folder'][-1] != "/":
+                fol += "/"
             lsline = "{}{}".format(f['folder'], f['name'])
             if args.long:
                 lsline = "{:10.2f} MB\t".format(r(float(fsize(f))/(1024*1024))) + lsline
