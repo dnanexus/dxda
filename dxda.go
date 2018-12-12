@@ -36,6 +36,7 @@ import (
 // Move mutex to a global variable since it is now used for any DB query
 var mutex = &sync.Mutex{}
 var ds DownloadStatus
+var timeOfLastError = time.Now().Second()
 
 func check(e error) {
 	if e != nil {
@@ -574,11 +575,17 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 		// The goroutine has panicked. Catch the error code, print it,
 		// and try downloading the part again. This can be retried up to [maxPanics] times.
 		if err := recover(); err != nil {
-			log.Println(err)
+			now := time.Now().Second()
+			updateOutput := now-timeOfLastError > 5
+			if updateOutput {
+				log.Println(err)
+			}
 			if maxPanics == 0 {
 				panic("Too many attempts to restart downloading part. Please contact support@dnanexus.com for assistance.")
 			} else {
-				PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
+				if updateOutput {
+					PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
+				}
 				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
 			}
 		}
