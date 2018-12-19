@@ -589,7 +589,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 				if updateOutput {
 					PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
 				}
-				time.Sleep(5 * time.Second)
+				time.Sleep(10 * time.Second)
 				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
 			}
 		}
@@ -606,12 +606,21 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 		// The goroutine has panicked. Catch the error code, print it,
 		// and try downloading the part again. This can be retried up to [maxPanics] times.
 		if err := recover(); err != nil {
-			log.Println(err)
+			now := time.Now().Second()
+			updateOutput := now-timeOfLastError > 5
+			mutex.Lock()
+			timeOfLastError = now
+			mutex.Unlock()
+			if updateOutput {
+				log.Println(err)
+			}
 			if maxPanics == 0 {
 				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
 			} else {
-				PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
-				time.Sleep(5 * time.Second)
+				if updateOutput {
+					PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
+				}
+				time.Sleep(10 * time.Second)
 				apirecoverer(maxPanics-1, dxapi, token, api, payload)
 			}
 		}
