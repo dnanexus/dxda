@@ -6,6 +6,7 @@ package dxda
 import (
 	"bytes"
 	"compress/bzip2"
+	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"crypto/x509"
@@ -180,12 +181,19 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 	var numAttempts uint
 	numAttempts = 1
 	for {
+		// Safety procedure to force timeout to prevent hanging
+		ctx, cancel := context.WithCancel(context.TODO())
+		timer := time.AfterFunc(120*time.Second, func() {
+			cancel()
+		})
 		req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
 		check(err)
+		req = req.WithContext(ctx)
 		for header, value := range headers {
 			req.Header.Set(header, value)
 		}
 		resp, err := client.Do(req)
+		timer.Stop()
 		check(err)
 		status = resp.Status
 		if resp.StatusCode == 503 {
