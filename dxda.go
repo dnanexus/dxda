@@ -36,7 +36,7 @@ import (
 // Move mutex to a global variable since it is now used for any DB query
 var mutex = &sync.Mutex{}
 var ds DownloadStatus
-var timeOfLastError = time.Now().Second()
+var timeOfLastError int
 
 func check(e error) {
 	if e != nil {
@@ -577,6 +577,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 		if err := recover(); err != nil {
 			now := time.Now().Second()
 			updateOutput := now-timeOfLastError > 5
+			fmt.Printf("Now: %d, Last: %d, Now-Last: %d\n", now, timeOfLastError, now-timeOfLastError)
 			mutex.Lock()
 			timeOfLastError = now
 			mutex.Unlock()
@@ -589,6 +590,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 				if updateOutput {
 					PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
 				}
+				time.Sleep(5*time.Second)
 				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
 			}
 		}
@@ -610,6 +612,7 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
 			} else {
 				PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
+				time.Sleep(5*time.Second)
 				apirecoverer(maxPanics-1, dxapi, token, api, payload)
 			}
 		}
@@ -619,6 +622,7 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 
 // DownloadManifestDB ...
 func DownloadManifestDB(fname, token string, opts Opts) {
+	timeOfLastError = time.Now().Second()
 	// TODO: Update to not require manifest structure read into memory
 	m := ReadManifest(fname)
 
