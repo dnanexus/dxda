@@ -577,7 +577,6 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 		if err := recover(); err != nil {
 			now := time.Now().Second()
 			updateOutput := now-timeOfLastError > 5
-			fmt.Printf("Now: %d, Last: %d, Now-Last: %d\n", now, timeOfLastError, now-timeOfLastError)
 			mutex.Lock()
 			timeOfLastError = now
 			mutex.Unlock()
