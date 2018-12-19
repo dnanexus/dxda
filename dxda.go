@@ -553,7 +553,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 			j.urls[j.part.FileID] = u
 			mutex.Unlock()
 		}
-		recoverer(-1, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
+		recoverer(25, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
 	}
 	wg.Done()
 }
@@ -584,7 +584,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 				log.Println(err)
 			}
 			if maxPanics == 0 {
-				panic("Too many attempts to restart downloading part. Please contact support@dnanexus.com for assistance.")
+				panic("Too many attempts to restart downloading part. Please try to restart the process and see if that works.  Otherwise, contact support@dnanexus.com for assistance.")
 			} else {
 				if updateOutput {
 					PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
@@ -615,7 +615,7 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 				log.Println(err)
 			}
 			if maxPanics == 0 {
-				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
+				panic("Too many attempts to call API. Please try to restart the process and see if that works.  Otherwise, contact support@dnanexus.com for assistance.")
 			} else {
 				if updateOutput {
 					PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
