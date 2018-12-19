@@ -5,7 +5,8 @@ import json
 from dxpy.utils.resolver import resolve_existing_path
 import bz2
 import sys
-
+import collections
+import os
 
 def fileID2manifest(fdetails, project):
     """
@@ -40,7 +41,13 @@ def main():
         if i%1000 == 0 and i != 0:
             print("Processed {} files".format(i))
 
+    # Dedup
     
+    dups = [item for item, count in collections.Counter([x['name'] for x in manifest[project]]).items() if count > 1]
+    for x in manifest[project]:
+        if x['name'] in dups:
+            fname, fext = os.path.splitext(x['name'])
+            x['name'] = fname + "_" + x['id'] + fext
 
     with open(args.outfile, "w") as f:
         f.write(bz2.compress(json.dumps(manifest, indent=2, sort_keys=True)))
