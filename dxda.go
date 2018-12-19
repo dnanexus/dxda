@@ -546,7 +546,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 				j.part.Project, secondsInYear)
 
 			// _, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
-			_, body := apirecoverer(10, DXAPI, token, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			_, body := apirecoverer(100, DXAPI, token, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
 			mutex.Lock()
@@ -590,7 +590,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 				if updateOutput {
 					PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
 				}
-				time.Sleep(5*time.Second)
+				time.Sleep(5 * time.Second)
 				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
 			}
 		}
@@ -612,7 +612,7 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 				panic("Too many attempts to call API. Please contact support@dnanexus.com for assistance.")
 			} else {
 				PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
-				time.Sleep(5*time.Second)
+				time.Sleep(5 * time.Second)
 				apirecoverer(maxPanics-1, dxapi, token, api, payload)
 			}
 		}
