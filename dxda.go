@@ -134,6 +134,7 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 			RetryWaitMax: maxRetryTime * time.Second,
 			RetryMax:     maxRetryCount,
 			CheckRetry:   retryablehttp.DefaultRetryPolicy,
+			Backoff:      retryablehttp.DefaultBackoff,
 		}
 	} else {
 		insecure := false
@@ -172,7 +173,7 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 			RetryWaitMax: maxRetryTime * time.Second,
 			RetryMax:     maxRetryCount,
 			CheckRetry:   retryablehttp.DefaultRetryPolicy,
-		}
+			Backoff:      retryablehttp.DefaultBackoff}
 	}
 
 	// Perpetually retry on 503 (e.g. platform downtime/throttling)
