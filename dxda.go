@@ -550,6 +550,7 @@ func downloadProgressContinuous(ds *DownloadStatus) {
 func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	const secondsInYear int = 60 * 60 * 24 * 365
 	for j := range jobs {
+		mutex.Lock()
 		if _, ok := j.urls[j.part.FileID]; !ok {
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
@@ -558,10 +559,9 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 			_, body := apirecoverer(100, DXAPI, token, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
-			mutex.Lock()
 			j.urls[j.part.FileID] = u
-			mutex.Unlock()
 		}
+		mutex.Unlock()
 		recoverer(25, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
 	}
 	wg.Done()
