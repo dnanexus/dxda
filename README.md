@@ -143,6 +143,13 @@ This repository can be used directly as a Go module as well.  In the `cmd/dx-dow
 
 For developing and experimenting with the source, the [Dockerfile](https://github.com/dnanexus/dxda/blob/master/Dockerfile) in this repository may be a good start.
 
+## Moving downloaded files
+
+After successfully downloading (and optionally inspecting post-download) it should be safe to move files to your desired location. 
+
+**WARNING** In general we advise not to move files during the course of a download but moving them could be safe in certain special cases.   The download agent works by maintaining a lightweight database of what parts of files have and havent been downloaded so that is what it primarily operates off of.  This means that even if you move files the download agent won’t realize it until you run the ‘inspect’ sub command that performs post-download checks for file integrity on disk. The inspect command will notice the files are missing, update the database, and when you re-issue a download command attempt to download them again.  Therefore, if you move completed files and don’t run the inspect subcommand, the download agent should continue from where it left off.  This being said, there is a danger in moving files is if a file download is not yet complete.  In that case you will have moved an incomplete file.
+
+
 ## Additional notes
 
 * Only objects of [class File](https://wiki.dnanexus.com/API-Specification-v1.0.0/Introduction-to-Data-Object-Classes) can be downloaded.
