@@ -603,6 +603,7 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 			}
 		}
 	}()
+
 	downloadPart(manifestFileName, p, wg, urls, mutex)
 }
 
@@ -789,6 +790,10 @@ func ResetDBFile(manifestFileName string, p DBPart) {
 
 // DownloadDBPart ...
 func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
+	timer := time.AfterFunc(10*time.Minute, func() {
+		panic("Timeout for downloading part exceeded.")
+	})
+	defer timer.Stop()
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
 	check(err)
