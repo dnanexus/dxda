@@ -16,7 +16,7 @@ def main():
         manifest = json.loads(bz2.decompress(mf.read()))
     new_manifest = {}
     for project, file_list in manifest.items():
-        new_manifest[project] = [f for f in file_list if re.match(args.regex, f['name'])]
+        new_manifest[project] = [f for f in file_list if re.match(args.regex, os.path.join(f['folder'], f['name']))]
     
     with open(args.output_file, "wb") as f:
         js_data = json.dumps(new_manifest, indent=2, sort_keys=True)
