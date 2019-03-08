@@ -3,6 +3,7 @@ from pprint import pprint
 import json
 import bz2
 import re
+import os
 
 
 def main():
