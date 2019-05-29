@@ -48,8 +48,11 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	dxda.PrintLogAndOut("Logging detailed output to: " + logfname + "\n")
 
-	token, method := dxda.GetToken()
-
+	dxEnv, method, err := dxda.GetDxEnvironment()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
@@ -61,7 +64,7 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	dxda.DownloadManifestDB(fname, token, opts)
+	dxda.DownloadManifestDB(fname, dxEnv, opts)
 	return subcommands.ExitSuccess
 }
 

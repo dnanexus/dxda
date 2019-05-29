@@ -10,7 +10,11 @@ import (
 
 func TestGetToken(t *testing.T) {
 	os.Setenv("DX_API_TOKEN", "blah")
-	token, method := dxda.GetToken()
+	dxEnv, method, err := dxda.GetDxEnvironment()
+	if err != nil {
+		t.Errorf("Encountered an error while getting the environment")
+	}
+	token := dxda.GetToken(dxEnv)
 	if token != "blah" {
 		t.Errorf(fmt.Sprintf("Expected token 'blah' but got %s", token))
 	}
