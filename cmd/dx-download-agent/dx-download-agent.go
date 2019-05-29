@@ -48,9 +48,9 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	dxda.PrintLogAndOut("Logging detailed output to: " + logfname + "\n")
 
-	dxEnv, method, err := dxda.GetDxEnvironment()
-	if err != nil {
-		fmt.Println(err)
+	dxEnv, method, errDxEnv := dxda.GetDxEnvironment()
+	if errDxEnv != nil {
+		fmt.Println(errDxEnv)
 		os.Exit(1)
 	}
 	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
@@ -62,7 +62,7 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	}
 	if err := dxda.CheckDiskSpace(fname); err != nil {
 		fmt.Println(err)
-		os.Exit(1)
+		//os.Exit(1)
 	}
 	dxda.DownloadManifestDB(fname, dxEnv, opts)
 	return subcommands.ExitSuccess

@@ -86,13 +86,20 @@ type DXAuthorization struct {
 // A subset of the configuration parameters that the dx-toolkit uses.
 //
 type DXEnvironment struct {
-	apiServerHost string
-	apiServerPort int
-	token         string
+	apiServerHost      string
+	apiServerPort      int
+	apiServerProtocol  string
+	token              string
 }
 
 func GetToken(dxEnv DXEnvironment) (string) {
 	return dxEnv.token
+}
+
+func SafeString2Int(s string) (int) {
+	i, err := strconv.Atoi(s)
+	check(err)
+	return i
 }
 
 /*
@@ -115,7 +122,7 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 	obtainedBy := ""
 
 	// start with hardcoded defaults
-	dxEnv := DXEnvironment{ "api.dnanexus.com", 443, "" }
+	dxEnv := DXEnvironment{ "api.dnanexus.com", 443, "https", "" }
 
 	// override by environment variables, if they are set
 	apiServerHost := os.Getenv("DX_APISERVER_HOST")
@@ -124,9 +131,11 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 	}
 	apiServerPort := os.Getenv("DX_APISERVER_PORT")
 	if apiServerPort != "" {
-		portNum, err := strconv.Atoi(apiServerPort)
-		check(err)
-		dxEnv.apiServerPort = portNum
+		dxEnv.apiServerPort = SafeString2Int(apiServerPort)
+	}
+	apiServerProtocol := os.Getenv("DX_APISERVER_PROTOCOL")
+	if apiServerProtocol != "" {
+		dxEnv.apiServerProtocol = apiServerProtocol
 	}
 	securityContext := os.Getenv("DX_SECURITY_CONTEXT")
 	if securityContext != "" {
@@ -152,9 +161,8 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 		json.Unmarshal([]byte(dxconf.DXSECURITYCONTEXT), &dxauth)
 
 		dxEnv.apiServerHost = dxconf.DXAPISERVERHOST
-		portNum, err := strconv.Atoi(dxconf.DXAPISERVERPORT)
-		check(err)
-		dxEnv.apiServerPort = portNum
+		dxEnv.apiServerPort = SafeString2Int(dxconf.DXAPISERVERPORT)
+		dxEnv.apiServerProtocol = dxconf.DXAPISERVERPROTOCOL
 		dxEnv.token = dxauth.AuthToken
 
 		obtainedBy = "~/.dnanexus_config/environment.json"
@@ -289,7 +297,7 @@ func DXAPI(dxEnv DXEnvironment, api string, payload string) (status string, body
 		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.token),
 		"Content-Type":  "application/json",
 	}
-	url := fmt.Sprintf("https://%s:%d/%s", dxEnv.apiServerHost, dxEnv.apiServerPort, api)
+	url := fmt.Sprintf("%s://%s:%d/%s", dxEnv.apiServerProtocol, dxEnv.apiServerHost, dxEnv.apiServerPort, api)
 	return makeRequestWithHeadersFail("POST", url, headers, []byte(payload))
 }
 

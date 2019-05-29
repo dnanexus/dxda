@@ -25,5 +25,4 @@ func TestGetToken(t *testing.T) {
 	os.Unsetenv("DX_API_TOKEN")
 
 	// Explicitly not testing home directory config file as it may clobber existing login info for executor
-
 }
