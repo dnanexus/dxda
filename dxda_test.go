@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/geetduggal/dxda"
+	"github.com/dnanexus/dxda"
 )
 
 func TestGetToken(t *testing.T) {
