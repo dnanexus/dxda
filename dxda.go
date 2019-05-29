@@ -86,14 +86,10 @@ type DXAuthorization struct {
 // A subset of the configuration parameters that the dx-toolkit uses.
 //
 type DXEnvironment struct {
-	apiServerHost      string
-	apiServerPort      int
-	apiServerProtocol  string
-	token              string
-}
-
-func GetToken(dxEnv DXEnvironment) (string) {
-	return dxEnv.token
+	ApiServerHost      string
+	ApiServerPort      int
+	ApiServerProtocol  string
+	Token              string
 }
 
 func SafeString2Int(s string) (int) {
@@ -127,27 +123,27 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 	// override by environment variables, if they are set
 	apiServerHost := os.Getenv("DX_APISERVER_HOST")
 	if apiServerHost != "" {
-		dxEnv.apiServerHost = apiServerHost
+		dxEnv.ApiServerHost = apiServerHost
 	}
 	apiServerPort := os.Getenv("DX_APISERVER_PORT")
 	if apiServerPort != "" {
-		dxEnv.apiServerPort = SafeString2Int(apiServerPort)
+		dxEnv.ApiServerPort = SafeString2Int(apiServerPort)
 	}
 	apiServerProtocol := os.Getenv("DX_APISERVER_PROTOCOL")
 	if apiServerProtocol != "" {
-		dxEnv.apiServerProtocol = apiServerProtocol
+		dxEnv.ApiServerProtocol = apiServerProtocol
 	}
 	securityContext := os.Getenv("DX_SECURITY_CONTEXT")
 	if securityContext != "" {
 		// parse the JSON format security content
 		var dxauth DXAuthorization
 		json.Unmarshal([]byte(securityContext), &dxauth)
-		dxEnv.token = dxauth.AuthToken
+		dxEnv.Token = dxauth.AuthToken
 		obtainedBy = "environment"
 	}
 	envToken := os.Getenv("DX_API_TOKEN")
 	if envToken != "" {
-		dxEnv.token = envToken
+		dxEnv.Token = envToken
 		obtainedBy = "environment"
 	}
 
@@ -160,17 +156,17 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 		var dxauth DXAuthorization
 		json.Unmarshal([]byte(dxconf.DXSECURITYCONTEXT), &dxauth)
 
-		dxEnv.apiServerHost = dxconf.DXAPISERVERHOST
-		dxEnv.apiServerPort = SafeString2Int(dxconf.DXAPISERVERPORT)
-		dxEnv.apiServerProtocol = dxconf.DXAPISERVERPROTOCOL
-		dxEnv.token = dxauth.AuthToken
+		dxEnv.ApiServerHost = dxconf.DXAPISERVERHOST
+		dxEnv.ApiServerPort = SafeString2Int(dxconf.DXAPISERVERPORT)
+		dxEnv.ApiServerProtocol = dxconf.DXAPISERVERPROTOCOL
+		dxEnv.Token = dxauth.AuthToken
 
 		obtainedBy = "~/.dnanexus_config/environment.json"
 	}
 
 	// sanity checks
 	var err error = nil
-	if dxEnv.token == "" {
+	if dxEnv.Token == "" {
 		err = errors.New("could not retrieve a security token")
 	}
 	return dxEnv, obtainedBy, err
@@ -294,10 +290,10 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 func DXAPI(dxEnv DXEnvironment, api string, payload string) (status string, body []byte) {
 	headers := map[string]string{
 		"User-Agent":    "DNAnexus Download Client v0.1",
-		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.token),
+		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.Token),
 		"Content-Type":  "application/json",
 	}
-	url := fmt.Sprintf("%s://%s:%d/%s", dxEnv.apiServerProtocol, dxEnv.apiServerHost, dxEnv.apiServerPort, api)
+	url := fmt.Sprintf("%s://%s:%d/%s", dxEnv.ApiServerProtocol, dxEnv.ApiServerHost, dxEnv.ApiServerPort, api)
 	return makeRequestWithHeadersFail("POST", url, headers, []byte(payload))
 }
 
@@ -401,12 +397,14 @@ func CheckDiskSpace(fname string) error {
 			DiskSpaceString(availableBytes),
 			DiskSpaceString(totalSizeBytes))
 		return errors.New(desc)
-	} else if stat.Ffree == 0 {
+	} /*else if stat.Ffree == 0 {
 		return errors.New("Disk space error: zero free inodes left. Removing many small files will help to address this problem most directly")
-	}
-	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s\n",
+
+	} */
+	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s,  #free-inodes=%d\n",
 		DiskSpaceString(totalSizeBytes),
-		DiskSpaceString(availableBytes))
+		DiskSpaceString(availableBytes),
+		stat.Ffree)
 	PrintLogAndOut(diskSpaceStr)
 	return nil
 }
