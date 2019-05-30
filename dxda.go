@@ -415,10 +415,7 @@ func CheckDiskSpace(fname string) error {
 			DiskSpaceString(availableBytes),
 			DiskSpaceString(totalSizeBytes))
 		return errors.New(desc)
-	} /*else if stat.Ffree == 0 {
-		return errors.New("Disk space error: zero free inodes left. Removing many small files will help to address this problem most directly")
-
-	} */
+	}
 	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s,  #free-inodes=%d\n",
 		DiskSpaceString(totalSizeBytes),
 		DiskSpaceString(availableBytes),
