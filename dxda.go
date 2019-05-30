@@ -67,14 +67,10 @@ func urlFailure(requestType string, url string, status string) {
 
 // PrintLogAndOut ...
 func PrintLogAndOut(str string) {
-	// on a job, we need to add a newline to stdout
-	str_msg := str
-	if dxEnv.DxJobId != "" {
-		str_msg = str_msg + "\n"
-	}
+	fmt.Printf(str)
 	log.Printf(str)
-	fmt.Printf(str_msg)
 }
+
 
 // Utilities to interact with the DNAnexus API
 // TODO: Create automatic API wrappers for the dx toolkit
@@ -647,9 +643,16 @@ func worker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) 
 func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	for j := range jobs {
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
-		// TODO: Get rid of temporary space padding fix for carriage returns
-		fmt.Printf("                                                                      \r")
-		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
+
+		if dxEnv.DxJobId == "" {
+			// running on a console, erase the previous line
+			// TODO: Get rid of this temporary space-padding fix for carriage returns
+			fmt.Printf("                                                                      \r")
+			fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
+		} else {
+			// We are on a dx-job, and we want to see the history of printouts
+			fmt.Printf("%s:%d\n")
+		}
 	}
 	wg.Done()
 }
@@ -901,9 +904,16 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()
 	progressStr := DownloadProgressOneTime(&ds, 60*1000*1000*1000)
-	// TODO: Get rid of this temporary space-padding fix for carriage returns
-	fmt.Printf("                                                                      \r")
-	fmt.Printf(progressStr + "\r")
+
+	if dxEnv.DxJobId == "" {
+		// running on a console, erase the previous line
+		// TODO: Get rid of this temporary space-padding fix for carriage returns
+		fmt.Printf("                                                                      \r")
+		fmt.Printf(progressStr + "\r")
+	} else {
+		// running on a job, we want to see the history
+		fmt.Printf(progressStr + "\n")
+	}
 	log.Printf(progressStr + "\n")
 
 }
