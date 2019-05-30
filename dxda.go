@@ -33,11 +33,26 @@ import (
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
 
+// A subset of the configuration parameters that the dx-toolkit uses.
+//
+type DXEnvironment struct {
+	ApiServerHost      string
+	ApiServerPort      int
+	ApiServerProtocol  string
+	Token              string
+	DxJobId            string
+}
+
 // TODO: Get rid of these globals and pass vars around as necessary
 // Move mutex to a global variable since it is now used for any DB query
 var mutex = &sync.Mutex{}
 var ds DownloadStatus
 var timeOfLastError int
+var dxEnv DXEnvironment
+
+func SetDxEnvironment(_dxEnv DXEnvironment) {
+	dxEnv = _dxEnv
+}
 
 func check(e error) {
 	if e != nil {
@@ -52,8 +67,13 @@ func urlFailure(requestType string, url string, status string) {
 
 // PrintLogAndOut ...
 func PrintLogAndOut(str string) {
+	// on a job, we need to add a newline to stdout
+	str_msg := str
+	if dxEnv.DxJobId != "" {
+		str_msg = str_msg + "\n"
+	}
 	log.Printf(str)
-	fmt.Printf(str)
+	fmt.Printf(str_msg)
 }
 
 // Utilities to interact with the DNAnexus API
@@ -83,16 +103,7 @@ type DXAuthorization struct {
 	AuthTokenType string `json:"auth_token_type"`
 }
 
-// A subset of the configuration parameters that the dx-toolkit uses.
-//
-type DXEnvironment struct {
-	ApiServerHost      string
-	ApiServerPort      int
-	ApiServerProtocol  string
-	Token              string
-}
-
-func SafeString2Int(s string) (int) {
+func safeString2Int(s string) (int) {
 	i, err := strconv.Atoi(s)
 	check(err)
 	return i
@@ -118,33 +129,37 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 	obtainedBy := ""
 
 	// start with hardcoded defaults
-	dxEnv := DXEnvironment{ "api.dnanexus.com", 443, "https", "" }
+	crntDxEnv := DXEnvironment{ "api.dnanexus.com", 443, "https", "", "" }
 
 	// override by environment variables, if they are set
 	apiServerHost := os.Getenv("DX_APISERVER_HOST")
 	if apiServerHost != "" {
-		dxEnv.ApiServerHost = apiServerHost
+		crntDxEnv.ApiServerHost = apiServerHost
 	}
 	apiServerPort := os.Getenv("DX_APISERVER_PORT")
 	if apiServerPort != "" {
-		dxEnv.ApiServerPort = SafeString2Int(apiServerPort)
+		crntDxEnv.ApiServerPort = safeString2Int(apiServerPort)
 	}
 	apiServerProtocol := os.Getenv("DX_APISERVER_PROTOCOL")
 	if apiServerProtocol != "" {
-		dxEnv.ApiServerProtocol = apiServerProtocol
+		crntDxEnv.ApiServerProtocol = apiServerProtocol
 	}
 	securityContext := os.Getenv("DX_SECURITY_CONTEXT")
 	if securityContext != "" {
 		// parse the JSON format security content
 		var dxauth DXAuthorization
 		json.Unmarshal([]byte(securityContext), &dxauth)
-		dxEnv.Token = dxauth.AuthToken
+		crntDxEnv.Token = dxauth.AuthToken
 		obtainedBy = "environment"
 	}
 	envToken := os.Getenv("DX_API_TOKEN")
 	if envToken != "" {
-		dxEnv.Token = envToken
+		crntDxEnv.Token = envToken
 		obtainedBy = "environment"
+	}
+	dxJobId := os.Getenv("DX_JOB_ID")
+	if dxJobId != "" {
+		crntDxEnv.DxJobId = dxJobId
 	}
 
 	// Now try the configuration file
@@ -156,20 +171,20 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 		var dxauth DXAuthorization
 		json.Unmarshal([]byte(dxconf.DXSECURITYCONTEXT), &dxauth)
 
-		dxEnv.ApiServerHost = dxconf.DXAPISERVERHOST
-		dxEnv.ApiServerPort = SafeString2Int(dxconf.DXAPISERVERPORT)
-		dxEnv.ApiServerProtocol = dxconf.DXAPISERVERPROTOCOL
-		dxEnv.Token = dxauth.AuthToken
+		crntDxEnv.ApiServerHost = dxconf.DXAPISERVERHOST
+		crntDxEnv.ApiServerPort = safeString2Int(dxconf.DXAPISERVERPORT)
+		crntDxEnv.ApiServerProtocol = dxconf.DXAPISERVERPROTOCOL
+		crntDxEnv.Token = dxauth.AuthToken
 
 		obtainedBy = "~/.dnanexus_config/environment.json"
 	}
 
 	// sanity checks
 	var err error = nil
-	if dxEnv.Token == "" {
+	if crntDxEnv.Token == "" {
 		err = errors.New("could not retrieve a security token")
 	}
-	return dxEnv, obtainedBy, err
+	return crntDxEnv, obtainedBy, err
 }
 
 // Min ...
@@ -287,7 +302,10 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 }
 
 // DXAPI (WIP) - Function to wrap a generic API call to DNAnexus
-func DXAPI(dxEnv DXEnvironment, api string, payload string) (status string, body []byte) {
+func DXAPI(api string, payload string) (status string, body []byte) {
+	if (dxEnv.Token == "") {
+		check(errors.New("The token is not set. This may be because the environment isn't set."))
+	}
 	headers := map[string]string{
 		"User-Agent":    "DNAnexus Download Client v0.1",
 		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.Token),
@@ -609,7 +627,7 @@ func downloadProgressContinuous(ds *DownloadStatus) {
 	}
 }
 
-func worker(id int, jobs <-chan JobInfo, dxEnv DXEnvironment, mutex *sync.Mutex, wg *sync.WaitGroup) {
+func worker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	const secondsInYear int = 60 * 60 * 24 * 365
 	for j := range jobs {
 		mutex.Lock()
@@ -618,7 +636,7 @@ func worker(id int, jobs <-chan JobInfo, dxEnv DXEnvironment, mutex *sync.Mutex,
 				j.part.Project, secondsInYear)
 
 			// _, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
-			_, body := apirecoverer(100, DXAPI, dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			_, body := apirecoverer(100, DXAPI, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
 			j.urls[j.part.FileID] = u
@@ -671,9 +689,9 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 
 // TODO: Generalize this better
 
-type apicaller func(dxEnv DXEnvironment, api string, payload string) (status string, body []byte)
+type apicaller func(api string, payload string) (status string, body []byte)
 
-func apirecoverer(maxPanics int, dxapi apicaller, dxEnv DXEnvironment, api string, payload string) (status string, body []byte) {
+func apirecoverer(maxPanics int, dxapi apicaller, api string, payload string) (status string, body []byte) {
 	defer func() {
 		// The goroutine has panicked. Catch the error code, print it,
 		// and try downloading the part again. This can be retried up to [maxPanics] times.
@@ -693,15 +711,15 @@ func apirecoverer(maxPanics int, dxapi apicaller, dxEnv DXEnvironment, api strin
 					PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
 				}
 				time.Sleep(10 * time.Second)
-				apirecoverer(maxPanics-1, dxapi, dxEnv, api, payload)
+				apirecoverer(maxPanics-1, dxapi, api, payload)
 			}
 		}
 	}()
-	return dxapi(dxEnv, api, payload)
+	return dxapi(api, payload)
 }
 
 // DownloadManifestDB ...
-func DownloadManifestDB(fname string, dxEnv DXEnvironment, opts Opts) {
+func DownloadManifestDB(fname string, opts Opts) {
 	timeOfLastError = time.Now().Second()
 	// TODO: Update to not require manifest structure read into memory
 	m := ReadManifest(fname)
@@ -744,7 +762,7 @@ func DownloadManifestDB(fname string, dxEnv DXEnvironment, opts Opts) {
 
 	for w := 1; w <= opts.NumThreads; w++ {
 		wg.Add(1)
-		go worker(w, jobs, dxEnv, mutex, &wg)
+		go worker(w, jobs, mutex, &wg)
 	}
 
 	ds = InitDownloadStatus(fname)
