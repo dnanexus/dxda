@@ -48,9 +48,14 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	dxda.PrintLogAndOut("Logging detailed output to: " + logfname + "\n")
 
-	token, method := dxda.GetToken()
-
+	dxEnv, method, err := dxda.GetDxEnvironment()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
+	dxda.SetDxEnvironment(dxEnv)
+
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
@@ -61,7 +66,7 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	dxda.DownloadManifestDB(fname, token, opts)
+	dxda.DownloadManifestDB(fname, opts)
 	return subcommands.ExitSuccess
 }
 

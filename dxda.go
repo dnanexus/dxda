@@ -33,11 +33,26 @@ import (
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
 
+// A subset of the configuration parameters that the dx-toolkit uses.
+//
+type DXEnvironment struct {
+	ApiServerHost      string
+	ApiServerPort      int
+	ApiServerProtocol  string
+	Token              string
+	DxJobId            string
+}
+
 // TODO: Get rid of these globals and pass vars around as necessary
 // Move mutex to a global variable since it is now used for any DB query
 var mutex = &sync.Mutex{}
 var ds DownloadStatus
 var timeOfLastError int
+var dxEnv DXEnvironment
+
+func SetDxEnvironment(_dxEnv DXEnvironment) {
+	dxEnv = _dxEnv
+}
 
 func check(e error) {
 	if e != nil {
@@ -52,9 +67,10 @@ func urlFailure(requestType string, url string, status string) {
 
 // PrintLogAndOut ...
 func PrintLogAndOut(str string) {
-	log.Printf(str)
 	fmt.Printf(str)
+	log.Printf(str)
 }
+
 
 // Utilities to interact with the DNAnexus API
 // TODO: Create automatic API wrappers for the dx toolkit
@@ -83,31 +99,88 @@ type DXAuthorization struct {
 	AuthTokenType string `json:"auth_token_type"`
 }
 
-// GetToken - Get DNAnexus authentication token
+func safeString2Int(s string) (int) {
+	i, err := strconv.Atoi(s)
+	check(err)
+	return i
+}
+
 /*
-   Returns a pair of strings representing the authentication token and where it was received from
-   If the environment variable DX_API_TOKEN is set, the token is obtained from it
-   Otherwise, the token is obtained from the '~/.dnanexus_config/environment.json' file
-   If no token can be obtained from these methods, a pair of empty strings is returned
+   Construct the environment structure. Return an additional string describing
+   the source of the security token.
+
+   The DXEnvironment has its fields set from the following sources, in order (with
+   later items overriding earlier items):
+
+   1. Hardcoded defaults
+   2. Environment variables of the format DX_*
+   3. Configuration file ~/.dnanexus_config/environment.json
+
+   If no token can be obtained from these methods, an empty environment is returned.
    If the token was received from the 'DX_API_TOKEN' environment variable, the second variable in the pair
-   will be the string 'environment'.  If it is obtained from a DNAnexus configuration file, the second variable
+   will be the string 'environment'. If it is obtained from a DNAnexus configuration file, the second variable
    in the pair will be '.dnanexus_config/environment.json'.
 */
-func GetToken() (string, string) {
-	envToken := os.Getenv("DX_API_TOKEN")
-	envFile := fmt.Sprintf("%s/.dnanexus_config/environment.json", os.Getenv("HOME"))
-	if envToken != "" {
-		return envToken, "environment"
+func GetDxEnvironment() (DXEnvironment, string, error) {
+	obtainedBy := ""
+
+	// start with hardcoded defaults
+	crntDxEnv := DXEnvironment{ "api.dnanexus.com", 443, "https", "", "" }
+
+	// override by environment variables, if they are set
+	apiServerHost := os.Getenv("DX_APISERVER_HOST")
+	if apiServerHost != "" {
+		crntDxEnv.ApiServerHost = apiServerHost
 	}
+	apiServerPort := os.Getenv("DX_APISERVER_PORT")
+	if apiServerPort != "" {
+		crntDxEnv.ApiServerPort = safeString2Int(apiServerPort)
+	}
+	apiServerProtocol := os.Getenv("DX_APISERVER_PROTOCOL")
+	if apiServerProtocol != "" {
+		crntDxEnv.ApiServerProtocol = apiServerProtocol
+	}
+	securityContext := os.Getenv("DX_SECURITY_CONTEXT")
+	if securityContext != "" {
+		// parse the JSON format security content
+		var dxauth DXAuthorization
+		json.Unmarshal([]byte(securityContext), &dxauth)
+		crntDxEnv.Token = dxauth.AuthToken
+		obtainedBy = "environment"
+	}
+	envToken := os.Getenv("DX_API_TOKEN")
+	if envToken != "" {
+		crntDxEnv.Token = envToken
+		obtainedBy = "environment"
+	}
+	dxJobId := os.Getenv("DX_JOB_ID")
+	if dxJobId != "" {
+		crntDxEnv.DxJobId = dxJobId
+	}
+
+	// Now try the configuration file
+	envFile := fmt.Sprintf("%s/.dnanexus_config/environment.json", os.Getenv("HOME"))
 	if _, err := os.Stat(envFile); err == nil {
 		config, _ := ioutil.ReadFile(envFile)
 		var dxconf DXConfig
 		json.Unmarshal(config, &dxconf)
 		var dxauth DXAuthorization
 		json.Unmarshal([]byte(dxconf.DXSECURITYCONTEXT), &dxauth)
-		return dxauth.AuthToken, "~/.dnanexus_config/environment.json"
+
+		crntDxEnv.ApiServerHost = dxconf.DXAPISERVERHOST
+		crntDxEnv.ApiServerPort = safeString2Int(dxconf.DXAPISERVERPORT)
+		crntDxEnv.ApiServerProtocol = dxconf.DXAPISERVERPROTOCOL
+		crntDxEnv.Token = dxauth.AuthToken
+
+		obtainedBy = "~/.dnanexus_config/environment.json"
 	}
-	return "", ""
+
+	// sanity checks
+	var err error = nil
+	if crntDxEnv.Token == "" {
+		err = errors.New("could not retrieve a security token")
+	}
+	return crntDxEnv, obtainedBy, err
 }
 
 // Min ...
@@ -225,17 +298,16 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 }
 
 // DXAPI (WIP) - Function to wrap a generic API call to DNAnexus
-func DXAPI(token, api string, payload string) (status string, body []byte) {
+func DXAPI(api string, payload string) (status string, body []byte) {
+	if (dxEnv.Token == "") {
+		check(errors.New("The token is not set. This may be because the environment isn't set."))
+	}
 	headers := map[string]string{
 		"User-Agent":    "DNAnexus Download Client v0.1",
-		"Authorization": fmt.Sprintf("Bearer %s", token),
+		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.Token),
 		"Content-Type":  "application/json",
 	}
-	apiServer := os.Getenv("DX_API_SERVER")
-	if apiServer == "" {
-		apiServer = "api.dnanexus.com"
-	}
-	url := fmt.Sprintf("https://%s/%s", apiServer, api)
+	url := fmt.Sprintf("%s://%s:%d/%s", dxEnv.ApiServerProtocol, dxEnv.ApiServerHost, dxEnv.ApiServerPort, api)
 	return makeRequestWithHeadersFail("POST", url, headers, []byte(payload))
 }
 
@@ -339,12 +411,11 @@ func CheckDiskSpace(fname string) error {
 			DiskSpaceString(availableBytes),
 			DiskSpaceString(totalSizeBytes))
 		return errors.New(desc)
-	} else if stat.Ffree == 0 {
-		return errors.New("Disk space error: zero free inodes left. Removing many small files will help to address this problem most directly")
 	}
-	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s\n",
+	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s,  #free-inodes=%d\n",
 		DiskSpaceString(totalSizeBytes),
-		DiskSpaceString(availableBytes))
+		DiskSpaceString(availableBytes),
+		stat.Ffree)
 	PrintLogAndOut(diskSpaceStr)
 	return nil
 }
@@ -423,7 +494,7 @@ func CreateManifestDB(fname string) {
 // TODO: Optimize this for only files that need to be downloaded
 //
 // OQ: The 'urls' map is empty
-func PrepareFilesForDownload(m Manifest, token string) map[string]DXDownloadURL {
+func PrepareFilesForDownload(m Manifest) map[string]DXDownloadURL {
 	urls := make(map[string]DXDownloadURL)
 	for _, files := range m {
 		for _, f := range files {
@@ -549,7 +620,7 @@ func downloadProgressContinuous(ds *DownloadStatus) {
 	}
 }
 
-func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sync.WaitGroup) {
+func worker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	const secondsInYear int = 60 * 60 * 24 * 365
 	for j := range jobs {
 		mutex.Lock()
@@ -558,7 +629,7 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 				j.part.Project, secondsInYear)
 
 			// _, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
-			_, body := apirecoverer(100, DXAPI, token, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			_, body := apirecoverer(100, DXAPI, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
 			j.urls[j.part.FileID] = u
@@ -572,9 +643,16 @@ func worker(id int, jobs <-chan JobInfo, token string, mutex *sync.Mutex, wg *sy
 func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
 	for j := range jobs {
 		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
-		// TODO: Get rid of temporary space padding fix for carriage returns
-		fmt.Printf("                                                                      \r")
-		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
+
+		if dxEnv.DxJobId == "" {
+			// running on a console, erase the previous line
+			// TODO: Get rid of this temporary space-padding fix for carriage returns
+			fmt.Printf("                                                                      \r")
+			fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
+		} else {
+			// We are on a dx-job, and we want to see the history of printouts
+			fmt.Printf("%s:%d\n")
+		}
 	}
 	wg.Done()
 }
@@ -611,9 +689,9 @@ func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, 
 
 // TODO: Generalize this better
 
-type apicaller func(token, api string, payload string) (status string, body []byte)
+type apicaller func(api string, payload string) (status string, body []byte)
 
-func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload string) (status string, body []byte) {
+func apirecoverer(maxPanics int, dxapi apicaller, api string, payload string) (status string, body []byte) {
 	defer func() {
 		// The goroutine has panicked. Catch the error code, print it,
 		// and try downloading the part again. This can be retried up to [maxPanics] times.
@@ -633,15 +711,15 @@ func apirecoverer(maxPanics int, dxapi apicaller, token, api string, payload str
 					PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
 				}
 				time.Sleep(10 * time.Second)
-				apirecoverer(maxPanics-1, dxapi, token, api, payload)
+				apirecoverer(maxPanics-1, dxapi, api, payload)
 			}
 		}
 	}()
-	return dxapi(token, api, payload)
+	return dxapi(api, payload)
 }
 
 // DownloadManifestDB ...
-func DownloadManifestDB(fname, token string, opts Opts) {
+func DownloadManifestDB(fname string, opts Opts) {
 	timeOfLastError = time.Now().Second()
 	// TODO: Update to not require manifest structure read into memory
 	m := ReadManifest(fname)
@@ -649,7 +727,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 	// TODO Log network settings and other helpful info for debugging
 
 	PrintLogAndOut("Preparing files for download\n")
-	urls := PrepareFilesForDownload(m, token)
+	urls := PrepareFilesForDownload(m)
 	statsFname := fname + ".stats.db"
 	runtime.GOMAXPROCS(opts.NumThreads)
 
@@ -684,7 +762,7 @@ func DownloadManifestDB(fname, token string, opts Opts) {
 
 	for w := 1; w <= opts.NumThreads; w++ {
 		wg.Add(1)
-		go worker(w, jobs, token, mutex, &wg)
+		go worker(w, jobs, mutex, &wg)
 	}
 
 	ds = InitDownloadStatus(fname)
@@ -826,9 +904,16 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	UpdateDBPart(manifestFileName, p)
 	mutex.Unlock()
 	progressStr := DownloadProgressOneTime(&ds, 60*1000*1000*1000)
-	// TODO: Get rid of this temporary space-padding fix for carriage returns
-	fmt.Printf("                                                                      \r")
-	fmt.Printf(progressStr + "\r")
+
+	if dxEnv.DxJobId == "" {
+		// running on a console, erase the previous line
+		// TODO: Get rid of this temporary space-padding fix for carriage returns
+		fmt.Printf("                                                                      \r")
+		fmt.Printf(progressStr + "\r")
+	} else {
+		// running on a job, we want to see the history
+		fmt.Printf(progressStr + "\n")
+	}
 	log.Printf(progressStr + "\n")
 
 }
