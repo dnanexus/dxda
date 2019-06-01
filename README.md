@@ -118,6 +118,24 @@ To direct `dx-download-agent` to a proxy, please set the `HTTP_PROXY` environmen
 
 By default, `dx-download-agent` uses certificates installed on the system to create secure connections.  If your system requires an additional TLS certificate and the `dx-download-agent` doesn't appear to be using a certificate installed on your system, there are two options in order of preference.  First, set the `DX_TLS_CERTIFICATE_FILE` environment variable to the path of the PEM-encoded TLS certificate file required by your parent organization. As a last-resort, you can connect insecurely by avoiding certificate verification all together by setting `DX_TLS_SKIP_VERIFY=true`. Use this for testing purposes only.
 
+## Creating and filtering manifest files
+
+For convenience, the `create_manifest_bulk.py` file in the `scripts/` directory is one way to create manifest files for the download agent.  This script requires that the [dx-toolkit](https://github.com/dnanexus/dx-toolkit) is installed on your system and that you are logged in to the DNAnexus platform.   An example of how it can be used:
+
+```bash
+python create_manifest_bulk.py --folder "Project:/Folder" --recursive --outfile "myfiles.manifest.json.bz2"
+```
+
+Here, a manifest is created for recursively *all* files under the project name `Project` and in the folder `Folder`. 
+
+The manifest can be subsequently filtered using the `filter_manifest.py` script.  For example, if you want to capture files in a particular folder (e.g. `Folder`) with `testcall` in them (e.g. `/Folder/ALL.chr22._testcall_20190222.genotypes.vcf.gz`), you can run the command:
+
+```bash
+$ python filter_manifest.py manifest.json.bz2 '^/Folder.*testcall.*'
+```
+
+where the second argument given to the script is a regular expression on the entire path (folder + filename).
+
 ## Splitting manifest files
 
 In some cases it may be desirable to split the download manifest into multiple manifest files for testing purposes or to manage multiple downloads of an entire data set across different environments.  To split the file, we provide a simple Python utility that requires no additional packages in the `scripts/` directory.  For example, executing the command:
