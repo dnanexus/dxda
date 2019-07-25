@@ -297,20 +297,6 @@ func makeRequestWithHeadersFail(requestType string, url string, headers map[stri
 	return status, body
 }
 
-// DXAPI (WIP) - Function to wrap a generic API call to DNAnexus
-func DXAPI(api string, payload string) (status string, body []byte) {
-	if (dxEnv.Token == "") {
-		check(errors.New("The token is not set. This may be because the environment isn't set."))
-	}
-	headers := map[string]string{
-		"User-Agent":    "DNAnexus Download Client v0.1",
-		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.Token),
-		"Content-Type":  "application/json",
-	}
-	url := fmt.Sprintf("%s://%s:%d/%s", dxEnv.ApiServerProtocol, dxEnv.ApiServerHost, dxEnv.ApiServerPort, api)
-	return makeRequestWithHeadersFail("POST", url, headers, []byte(payload))
-}
-
 // TODO: ValidateManifest(manifest) + Tests
 
 // Manifest - core type of manifest file
@@ -628,14 +614,17 @@ func worker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) 
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
 
-			// _, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
-			_, body := apirecoverer(100, DXAPI, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			// TODO: 100 retries
+			body, err := DxAPI(&dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			check(err)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
 			j.urls[j.part.FileID] = u
 		}
 		mutex.Unlock()
-		recoverer(25, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
+
+		// TODO: 25 retries
+		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls, mutex)
 	}
 	wg.Done()
 }
@@ -655,67 +644,6 @@ func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *syn
 		}
 	}
 	wg.Done()
-}
-
-type downloader func(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex)
-
-func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
-	defer func() {
-		// The goroutine has panicked. Catch the error code, print it,
-		// and try downloading the part again. This can be retried up to [maxPanics] times.
-		if err := recover(); err != nil {
-			now := time.Now().Second()
-			updateOutput := now-timeOfLastError > 5
-			mutex.Lock()
-			timeOfLastError = now
-			mutex.Unlock()
-			if updateOutput {
-				log.Println(err)
-			}
-			if maxPanics == 0 {
-				panic("Too many attempts to restart downloading part. Please try to restart the process and see if that works.  Otherwise, contact support@dnanexus.com for assistance.")
-			} else {
-				if updateOutput {
-					PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
-				}
-				time.Sleep(10 * time.Second)
-				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
-			}
-		}
-	}()
-
-	downloadPart(manifestFileName, p, wg, urls, mutex)
-}
-
-// TODO: Generalize this better
-
-type apicaller func(api string, payload string) (status string, body []byte)
-
-func apirecoverer(maxPanics int, dxapi apicaller, api string, payload string) (status string, body []byte) {
-	defer func() {
-		// The goroutine has panicked. Catch the error code, print it,
-		// and try downloading the part again. This can be retried up to [maxPanics] times.
-		if err := recover(); err != nil {
-			now := time.Now().Second()
-			updateOutput := now-timeOfLastError > 5
-			mutex.Lock()
-			timeOfLastError = now
-			mutex.Unlock()
-			if updateOutput {
-				log.Println(err)
-			}
-			if maxPanics == 0 {
-				panic("Too many attempts to call API. Please try to restart the process and see if that works.  Otherwise, contact support@dnanexus.com for assistance.")
-			} else {
-				if updateOutput {
-					PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
-				}
-				time.Sleep(10 * time.Second)
-				apirecoverer(maxPanics-1, dxapi, api, payload)
-			}
-		}
-	}()
-	return dxapi(api, payload)
 }
 
 // DownloadManifestDB ...
@@ -869,7 +797,7 @@ func ResetDBFile(manifestFileName string, p DBPart) {
 }
 
 // DownloadDBPart ...
-func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
+func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) error {
 	timer := time.AfterFunc(10*time.Minute, func() {
 		panic("Timeout for downloading part exceeded.")
 	})
@@ -888,12 +816,8 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
-	_, body := makeRequestWithHeadersFail("GET", u.URL+"/"+p.Project, headers, []byte("{}"))
-	if md5str(body) != p.MD5 {
-		md5Error := fmt.Sprintf("MD5 string of part ID %d does not match stored MD5sum. Retrying.", p.PartID)
-		log.Println(md5Error)
-		panic(md5Error)
-	}
+	body, err := dxHttpRequestChecksum("GET", u.URL, headers, []byte("{}"), &p)
+	check(err)
 	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
 	check(err)
 	_, err = localf.Write(body)
@@ -915,7 +839,47 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 		fmt.Printf(progressStr + "\n")
 	}
 	log.Printf(progressStr + "\n")
+	return nil
+}
 
+// Add retries around the core http-request method
+//
+func dxHttpRequestChecksum(
+	requestType string,
+	url string,
+	headers map[string]string,
+	data []byte,
+	p *DBPart) (body []byte, err error) {
+	tCnt := 0
+	for tCnt < 3 {
+		body, err := DxHttpRequest(requestType, url, headers, data)
+		if err != nil {
+			return nil, err
+		}
+
+		// check that the length is correct
+		recvLen := len(body)
+		if recvLen != p.Size {
+			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, p.Size)
+			tCnt++
+			continue
+		}
+
+		// Verify the checksum.
+		recvChksum := md5str(body)
+		if recvChksum == p.MD5 {
+			// good checksum
+			return body, nil
+		}
+
+		// bad checksum, we need to retry
+		log.Printf("MD5 string of part ID %d does not match stored MD5sum. Retrying.", p.PartID)
+		tCnt++
+	}
+
+	err = fmt.Errorf("%s request to '%s' failed after %d attempts",
+		requestType, url, tCnt)
+	return nil, err
 }
 
 // CheckDBPart ...

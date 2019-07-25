@@ -30,7 +30,7 @@ def main():
     parser.add_argument('-r', '--recursive', help='Recursively traverse folders and append to manifest', action='store_true')
 
     args = parser.parse_args()
-    
+
     project, folder, _ = resolve_existing_path(args.folder)
 
     ids = dxpy.find_data_objects(classname='file', first_page_size=1000, describe={'id': True, 'name': True, 'folder': True, 'parts': True }, project=project, folder=folder, recurse=args.recursive)
@@ -42,15 +42,16 @@ def main():
             print("Processed {} files".format(i))
 
     # Dedup
-    
+
     dups = [item for item, count in collections.Counter([x['name'] for x in manifest[project]]).items() if count > 1]
     for x in manifest[project]:
         if x['name'] in dups:
             fname, fext = os.path.splitext(x['name'])
             x['name'] = fname + "_" + x['id'] + fext
 
-    with open(args.outfile, "w") as f:
-        f.write(bz2.compress(json.dumps(manifest, indent=2, sort_keys=True)))
+    with open(args.outfile, "wb") as f:
+        value = json.dumps(manifest, indent=2, sort_keys=True)
+        f.write(bz2.compress(value.encode()))
 
     print("Manifest file written to {}".format(args.outfile))
     print("Total {} objects".format(len(manifest[project])))
