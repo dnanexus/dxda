@@ -6,30 +6,23 @@ package dxda
 import (
 	"bytes"
 	"compress/bzip2"
-	"context"
 	"crypto/md5"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"path"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"database/sql"
 
-	"github.com/hashicorp/go-cleanhttp"     // required by go-retryablehttp
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
 
@@ -190,111 +183,6 @@ func Min(x, y int) int {
 		return x
 	}
 	return y
-}
-
-func makeRequestWithHeadersFail(requestType string, url string, headers map[string]string, data []byte) (status string, body []byte) {
-	const minRetryTime = 1   // seconds
-	const maxRetryTime = 120 // seconds
-	const maxRetryCount = 10
-	const userAgent = "DNAnexus Download Agent (v. 0.1)"
-
-	var client *retryablehttp.Client
-	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
-	if localCertFile == "" {
-		client = &retryablehttp.Client{
-			HTTPClient:   cleanhttp.DefaultClient(),
-			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-			RetryWaitMin: minRetryTime * time.Second,
-			RetryWaitMax: maxRetryTime * time.Second,
-			RetryMax:     maxRetryCount,
-			CheckRetry:   retryablehttp.DefaultRetryPolicy,
-			Backoff:      retryablehttp.DefaultBackoff,
-		}
-	} else {
-		insecure := false
-		if os.Getenv("DX_TLS_SKIP_VERIFY") == "true" {
-			insecure = true
-		}
-
-		// Get the SystemCertPool, continue with an empty pool on error
-		rootCAs, _ := x509.SystemCertPool()
-		if rootCAs == nil {
-			rootCAs = x509.NewCertPool()
-		}
-
-		// Read in the cert file
-		certs, err := ioutil.ReadFile(localCertFile)
-		check(err)
-
-		// Append our cert to the system pool
-		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
-			log.Println("No certs appended, using system certs only")
-		}
-
-		// Trust the augmented cert pool in our client
-		config := &tls.Config{
-			InsecureSkipVerify: insecure,
-			RootCAs:            rootCAs,
-		}
-
-		tr := cleanhttp.DefaultTransport()
-		tr.TLSClientConfig = config
-
-		client = &retryablehttp.Client{
-			HTTPClient:   &http.Client{Transport: tr},
-			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-			RetryWaitMin: minRetryTime * time.Second,
-			RetryWaitMax: maxRetryTime * time.Second,
-			RetryMax:     maxRetryCount,
-			CheckRetry:   retryablehttp.DefaultRetryPolicy,
-			Backoff:      retryablehttp.DefaultBackoff}
-	}
-
-	// Perpetually retry on 503 (e.g. platform downtime/throttling)
-	var numAttempts uint
-	numAttempts = 1
-	for {
-		// Safety procedure to force timeout to prevent hanging
-		ctx, cancel := context.WithCancel(context.TODO())
-		timer := time.AfterFunc(120*time.Second, func() {
-			cancel()
-		})
-		req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
-		check(err)
-		req = req.WithContext(ctx)
-		for header, value := range headers {
-			req.Header.Set(header, value)
-		}
-		resp, err := client.Do(req)
-		timer.Stop()
-		check(err)
-		status = resp.Status
-		if resp.StatusCode == 503 {
-			var waitTime = 1
-			// If a 'retry-after' header exists, use it
-			if resp.Header.Get("retry-after") != "" {
-				waitTime, err = strconv.Atoi(resp.Header.Get("retry-after"))
-				check(err)
-			} else { // Otherwise, exponentially backoff up to a reasonable amount
-				const reasonableMaxWaitTime = 30 * 60
-				waitTime = Min(reasonableMaxWaitTime, 1<<numAttempts)
-			}
-			time.Sleep(time.Duration(waitTime) * time.Second)
-			resp.Body.Close()
-			numAttempts++
-			continue
-		}
-		body, _ = ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		// TODO: Investigate more sophsticated handling of these error codes ala
-		// https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
-		if !strings.HasPrefix(status, "2") {
-			urlFailure(requestType, url, status)
-		}
-		break
-	}
-	return status, body
 }
 
 // TODO: ValidateManifest(manifest) + Tests

@@ -5,6 +5,8 @@ import json
 import bz2
 from dxpy.utils.resolver import resolve_existing_path
 
+import compat
+
 
 def fileID2manifest(fdetails, project):
     """
@@ -43,12 +45,7 @@ def generate_manifest_file(folder, project, outfile, recursive):
             add_folder_to_manifest(subf)
 
   add_folder_to_manifest(folder)
-  # binary mode is needed for python 3.
-  # This hasn't been tested with python 2, hopefully, it will work.
-  with open(outfile, "wb") as f:
-      js_data = json.dumps(manifest, indent=2, sort_keys=True)
-      data = bz2.compress(js_data.encode())
-      f.write(data)
+  compat.write_manifest_to_file(outfile, manifest)
 
 def main():
     parser = argparse.ArgumentParser(description='Create a manifest file from a DNAnexus directory')

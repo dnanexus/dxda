@@ -3,11 +3,15 @@ package dxda
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"strings"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -88,14 +92,55 @@ func dxHttpRequestCore(
 	data []byte) (body []byte, err error, status string) {
 
 	var client *retryablehttp.Client
-	client = &retryablehttp.Client{
-		HTTPClient:   cleanhttp.DefaultClient(),
-		Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-		RetryWaitMin: minRetryTime * time.Second,
-		RetryWaitMax: maxRetryTime * time.Second,
-		RetryMax:     maxRetryCount,
-		CheckRetry:   retryablehttp.DefaultRetryPolicy,
-		Backoff:      retryablehttp.DefaultBackoff,
+	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
+	if localCertFile == "" {
+		client = &retryablehttp.Client{
+			HTTPClient:   cleanhttp.DefaultClient(),
+			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
+			RetryWaitMin: minRetryTime * time.Second,
+			RetryWaitMax: maxRetryTime * time.Second,
+			RetryMax:     maxRetryCount,
+			CheckRetry:   retryablehttp.DefaultRetryPolicy,
+			Backoff:      retryablehttp.DefaultBackoff,
+		}
+	} else {
+		insecure := false
+		if os.Getenv("DX_TLS_SKIP_VERIFY") == "true" {
+			insecure = true
+		}
+
+		// Get the SystemCertPool, continue with an empty pool on error
+		rootCAs, _ := x509.SystemCertPool()
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+
+		// Read in the cert file
+		certs, err := ioutil.ReadFile(localCertFile)
+		check(err)
+
+		// Append our cert to the system pool
+		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
+			log.Println("No certs appended, using system certs only")
+		}
+
+		// Trust the augmented cert pool in our client
+		config := &tls.Config{
+			InsecureSkipVerify: insecure,
+			RootCAs:            rootCAs,
+		}
+
+		tr := cleanhttp.DefaultTransport()
+		tr.TLSClientConfig = config
+
+		client = &retryablehttp.Client{
+			HTTPClient:   &http.Client{Transport: tr},
+			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
+			RetryWaitMin: minRetryTime * time.Second,
+			RetryWaitMax: maxRetryTime * time.Second,
+			RetryMax:     maxRetryCount,
+			CheckRetry:   retryablehttp.DefaultRetryPolicy,
+			Backoff:      retryablehttp.DefaultBackoff}
 	}
 
 	// Safety procedure to force timeout to prevent hanging

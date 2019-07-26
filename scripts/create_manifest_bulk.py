@@ -3,10 +3,11 @@ import dxpy
 from pprint import pprint
 import json
 from dxpy.utils.resolver import resolve_existing_path
-import bz2
 import sys
 import collections
 import os
+
+import compat
 
 def fileID2manifest(fdetails, project):
     """
@@ -49,10 +50,7 @@ def main():
             fname, fext = os.path.splitext(x['name'])
             x['name'] = fname + "_" + x['id'] + fext
 
-    with open(args.outfile, "wb") as f:
-        value = json.dumps(manifest, indent=2, sort_keys=True)
-        f.write(bz2.compress(value.encode()))
-
+    compat.write_manifest_to_file(args.outfile, manifest)
     print("Manifest file written to {}".format(args.outfile))
     print("Total {} objects".format(len(manifest[project])))
 
