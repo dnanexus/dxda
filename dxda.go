@@ -6,30 +6,23 @@ package dxda
 import (
 	"bytes"
 	"compress/bzip2"
-	"context"
 	"crypto/md5"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"path"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"database/sql"
 
-	"github.com/hashicorp/go-cleanhttp"     // required by go-retryablehttp
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
 
@@ -190,125 +183,6 @@ func Min(x, y int) int {
 		return x
 	}
 	return y
-}
-
-func makeRequestWithHeadersFail(requestType string, url string, headers map[string]string, data []byte) (status string, body []byte) {
-	const minRetryTime = 1   // seconds
-	const maxRetryTime = 120 // seconds
-	const maxRetryCount = 10
-	const userAgent = "DNAnexus Download Agent (v. 0.1)"
-
-	var client *retryablehttp.Client
-	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
-	if localCertFile == "" {
-		client = &retryablehttp.Client{
-			HTTPClient:   cleanhttp.DefaultClient(),
-			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-			RetryWaitMin: minRetryTime * time.Second,
-			RetryWaitMax: maxRetryTime * time.Second,
-			RetryMax:     maxRetryCount,
-			CheckRetry:   retryablehttp.DefaultRetryPolicy,
-			Backoff:      retryablehttp.DefaultBackoff,
-		}
-	} else {
-		insecure := false
-		if os.Getenv("DX_TLS_SKIP_VERIFY") == "true" {
-			insecure = true
-		}
-
-		// Get the SystemCertPool, continue with an empty pool on error
-		rootCAs, _ := x509.SystemCertPool()
-		if rootCAs == nil {
-			rootCAs = x509.NewCertPool()
-		}
-
-		// Read in the cert file
-		certs, err := ioutil.ReadFile(localCertFile)
-		check(err)
-
-		// Append our cert to the system pool
-		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
-			log.Println("No certs appended, using system certs only")
-		}
-
-		// Trust the augmented cert pool in our client
-		config := &tls.Config{
-			InsecureSkipVerify: insecure,
-			RootCAs:            rootCAs,
-		}
-
-		tr := cleanhttp.DefaultTransport()
-		tr.TLSClientConfig = config
-
-		client = &retryablehttp.Client{
-			HTTPClient:   &http.Client{Transport: tr},
-			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-			RetryWaitMin: minRetryTime * time.Second,
-			RetryWaitMax: maxRetryTime * time.Second,
-			RetryMax:     maxRetryCount,
-			CheckRetry:   retryablehttp.DefaultRetryPolicy,
-			Backoff:      retryablehttp.DefaultBackoff}
-	}
-
-	// Perpetually retry on 503 (e.g. platform downtime/throttling)
-	var numAttempts uint
-	numAttempts = 1
-	for {
-		// Safety procedure to force timeout to prevent hanging
-		ctx, cancel := context.WithCancel(context.TODO())
-		timer := time.AfterFunc(120*time.Second, func() {
-			cancel()
-		})
-		req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
-		check(err)
-		req = req.WithContext(ctx)
-		for header, value := range headers {
-			req.Header.Set(header, value)
-		}
-		resp, err := client.Do(req)
-		timer.Stop()
-		check(err)
-		status = resp.Status
-		if resp.StatusCode == 503 {
-			var waitTime = 1
-			// If a 'retry-after' header exists, use it
-			if resp.Header.Get("retry-after") != "" {
-				waitTime, err = strconv.Atoi(resp.Header.Get("retry-after"))
-				check(err)
-			} else { // Otherwise, exponentially backoff up to a reasonable amount
-				const reasonableMaxWaitTime = 30 * 60
-				waitTime = Min(reasonableMaxWaitTime, 1<<numAttempts)
-			}
-			time.Sleep(time.Duration(waitTime) * time.Second)
-			resp.Body.Close()
-			numAttempts++
-			continue
-		}
-		body, _ = ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		// TODO: Investigate more sophsticated handling of these error codes ala
-		// https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
-		if !strings.HasPrefix(status, "2") {
-			urlFailure(requestType, url, status)
-		}
-		break
-	}
-	return status, body
-}
-
-// DXAPI (WIP) - Function to wrap a generic API call to DNAnexus
-func DXAPI(api string, payload string) (status string, body []byte) {
-	if (dxEnv.Token == "") {
-		check(errors.New("The token is not set. This may be because the environment isn't set."))
-	}
-	headers := map[string]string{
-		"User-Agent":    "DNAnexus Download Client v0.1",
-		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.Token),
-		"Content-Type":  "application/json",
-	}
-	url := fmt.Sprintf("%s://%s:%d/%s", dxEnv.ApiServerProtocol, dxEnv.ApiServerHost, dxEnv.ApiServerPort, api)
-	return makeRequestWithHeadersFail("POST", url, headers, []byte(payload))
 }
 
 // TODO: ValidateManifest(manifest) + Tests
@@ -628,14 +502,17 @@ func worker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) 
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
 
-			// _, body := DXAPI(token, fmt.Sprintf("%s/download", j.part.FileID), payload)
-			_, body := apirecoverer(100, DXAPI, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			// TODO: 100 retries
+			body, err := DxAPI(&dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			check(err)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
 			j.urls[j.part.FileID] = u
 		}
 		mutex.Unlock()
-		recoverer(25, DownloadDBPart, j.manifestFileName, j.part, j.wg, j.urls, mutex)
+
+		// TODO: 25 retries
+		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls, mutex)
 	}
 	wg.Done()
 }
@@ -655,67 +532,6 @@ func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *syn
 		}
 	}
 	wg.Done()
-}
-
-type downloader func(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex)
-
-func recoverer(maxPanics int, downloadPart downloader, manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
-	defer func() {
-		// The goroutine has panicked. Catch the error code, print it,
-		// and try downloading the part again. This can be retried up to [maxPanics] times.
-		if err := recover(); err != nil {
-			now := time.Now().Second()
-			updateOutput := now-timeOfLastError > 5
-			mutex.Lock()
-			timeOfLastError = now
-			mutex.Unlock()
-			if updateOutput {
-				log.Println(err)
-			}
-			if maxPanics == 0 {
-				panic("Too many attempts to restart downloading part. Please try to restart the process and see if that works.  Otherwise, contact support@dnanexus.com for assistance.")
-			} else {
-				if updateOutput {
-					PrintLogAndOut("Attempting to gracefully recover from an error. See logfile for more detail.\n")
-				}
-				time.Sleep(10 * time.Second)
-				recoverer(maxPanics-1, downloadPart, manifestFileName, p, wg, urls, mutex)
-			}
-		}
-	}()
-
-	downloadPart(manifestFileName, p, wg, urls, mutex)
-}
-
-// TODO: Generalize this better
-
-type apicaller func(api string, payload string) (status string, body []byte)
-
-func apirecoverer(maxPanics int, dxapi apicaller, api string, payload string) (status string, body []byte) {
-	defer func() {
-		// The goroutine has panicked. Catch the error code, print it,
-		// and try downloading the part again. This can be retried up to [maxPanics] times.
-		if err := recover(); err != nil {
-			now := time.Now().Second()
-			updateOutput := now-timeOfLastError > 5
-			mutex.Lock()
-			timeOfLastError = now
-			mutex.Unlock()
-			if updateOutput {
-				log.Println(err)
-			}
-			if maxPanics == 0 {
-				panic("Too many attempts to call API. Please try to restart the process and see if that works.  Otherwise, contact support@dnanexus.com for assistance.")
-			} else {
-				if updateOutput {
-					PrintLogAndOut("Attempting to gracefully recover from an API call error. See logfile for more detail.\n")
-				}
-				time.Sleep(10 * time.Second)
-				apirecoverer(maxPanics-1, dxapi, api, payload)
-			}
-		}
-	}()
-	return dxapi(api, payload)
 }
 
 // DownloadManifestDB ...
@@ -869,7 +685,7 @@ func ResetDBFile(manifestFileName string, p DBPart) {
 }
 
 // DownloadDBPart ...
-func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) {
+func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) error {
 	timer := time.AfterFunc(10*time.Minute, func() {
 		panic("Timeout for downloading part exceeded.")
 	})
@@ -888,12 +704,8 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
-	_, body := makeRequestWithHeadersFail("GET", u.URL+"/"+p.Project, headers, []byte("{}"))
-	if md5str(body) != p.MD5 {
-		md5Error := fmt.Sprintf("MD5 string of part ID %d does not match stored MD5sum. Retrying.", p.PartID)
-		log.Println(md5Error)
-		panic(md5Error)
-	}
+	body, err := dxHttpRequestChecksum("GET", u.URL, headers, []byte("{}"), &p)
+	check(err)
 	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
 	check(err)
 	_, err = localf.Write(body)
@@ -915,7 +727,47 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 		fmt.Printf(progressStr + "\n")
 	}
 	log.Printf(progressStr + "\n")
+	return nil
+}
 
+// Add retries around the core http-request method
+//
+func dxHttpRequestChecksum(
+	requestType string,
+	url string,
+	headers map[string]string,
+	data []byte,
+	p *DBPart) (body []byte, err error) {
+	tCnt := 0
+	for tCnt < 3 {
+		body, err := DxHttpRequest(requestType, url, headers, data)
+		if err != nil {
+			return nil, err
+		}
+
+		// check that the length is correct
+		recvLen := len(body)
+		if recvLen != p.Size {
+			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, p.Size)
+			tCnt++
+			continue
+		}
+
+		// Verify the checksum.
+		recvChksum := md5str(body)
+		if recvChksum == p.MD5 {
+			// good checksum
+			return body, nil
+		}
+
+		// bad checksum, we need to retry
+		log.Printf("MD5 string of part ID %d does not match stored MD5sum. Retrying.", p.PartID)
+		tCnt++
+	}
+
+	err = fmt.Errorf("%s request to '%s' failed after %d attempts",
+		requestType, url, tCnt)
+	return nil, err
 }
 
 // CheckDBPart ...

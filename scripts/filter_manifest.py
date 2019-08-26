@@ -5,6 +5,7 @@ import bz2
 import re
 import os
 
+import compat
 
 def main():
     parser = argparse.ArgumentParser(description='Filter a manifest file by a regular expression on file path (folder and name)')
@@ -18,11 +19,8 @@ def main():
     new_manifest = {}
     for project, file_list in manifest.items():
         new_manifest[project] = [f for f in file_list if re.match(args.regex, os.path.join(f['folder'], f['name']))]
-    
-    with open(args.output_file, "wb") as f:
-        js_data = json.dumps(new_manifest, indent=2, sort_keys=True)
-        data = bz2.compress(js_data.encode())
-        f.write(data)
+
+    compat.write_manifest_to_file(args.output_file, new_manifest)
 
 
 if __name__ == "__main__":
