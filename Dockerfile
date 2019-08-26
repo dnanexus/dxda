@@ -3,8 +3,8 @@ FROM ubuntu:16.04
 
 # Get dependencies for running Go
 RUN apt-get update && apt-get install -y wget git build-essential && \
-    wget https://dl.google.com/go/go1.11.1.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.11.1.linux-amd64.tar.gz
+    wget https://dl.google.com/go/go1.12.7.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.12.7.linux-amd64.tar.gz
 
 # Set environment variables for Go
 ENV PATH="/usr/local/go/bin:${PATH}"

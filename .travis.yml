@@ -1,5 +1,4 @@
 sudo: required
-dist: bionic
 
 services:
   - docker
@@ -25,9 +24,3 @@ script:
 branches:
   only:
   - master
-
-
-language: go
-
-go :
-  - 1.12.7
