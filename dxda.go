@@ -36,15 +36,13 @@ type DXEnvironment struct {
 	DxJobId            string
 }
 
-// TODO: Get rid of these globals and pass vars around as necessary
-// Move mutex to a global variable since it is now used for any DB query
-var mutex = &sync.Mutex{}
-var ds DownloadStatus
-var timeOfLastError int
-var dxEnv DXEnvironment
-
-func SetDxEnvironment(_dxEnv DXEnvironment) {
-	dxEnv = _dxEnv
+type State struct {
+	dxEnv            DXEnvironment
+	opts             Opts
+	mutex           *sync.Mutex
+	db              *sql.DB
+	ds              *DownloadStatus
+	timeOfLastError  int
 }
 
 func check(e error) {
@@ -204,28 +202,41 @@ type DXPart struct {
 	Size int    `json:"size"`
 }
 
-// Probably a better way to do this :)
-func queryDBIntegerResult(query, dbFname string) int {
-	mutex.Lock()
-	statsFname := dbFname + "?_busy_timeout=60000&cache=shared&mode=rc"
-
+// Initialize the state
+func Init(dxEnv DXEnvironment, fname string, opts Opts) *State {
+	statsFname := fname + ".stats.db?cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
-	defer db.Close()
 
-	rows, err := db.Query(query)
+	return &State {
+		dxEnv : dxEnv,
+		opts : opts,
+		mutex : &sync.Mutex{},
+		db : db,
+		ds : nil,
+		timeOfLastError : 0,
+	}
+}
+
+func (st *State) Close() {
+	st.db.Close()
+}
+
+// Probably a better way to do this :)
+func (st *State) queryDBIntegerResult(query string) int {
+	rows, err := st.db.Query(query)
 	check(err)
+
 	var cnt int
 	rows.Next()
 	rows.Scan(&cnt)
 	rows.Close()
-	mutex.Unlock()
 
 	return cnt
 }
 
-// ReadManifest ...
-func ReadManifest(fname string) Manifest {
+// read the manifest from a file into a memory structure
+func readManifest(fname string) Manifest {
 	bzdata, err := ioutil.ReadFile(fname)
 	check(err)
 	br := bzip2.NewReader(bytes.NewReader(bzdata))
@@ -238,7 +249,7 @@ func ReadManifest(fname string) Manifest {
 
 // DiskSpaceString ...
 // write the number of bytes as a human readable string
-func DiskSpaceString(numBytes uint64) string {
+func diskSpaceString(numBytes uint64) string {
 	const KB = 1024
 	const MB = 1024 * KB
 	const GB = 1024 * MB
@@ -263,32 +274,34 @@ func DiskSpaceString(numBytes uint64) string {
 
 // CheckDiskSpace ...
 // Check that we have enough disk space for all downloaded files
-func CheckDiskSpace(fname string) error {
+func (st *State) CheckDiskSpace() error {
 	// Calculate total disk space required. To get an accurate number,
 	// query the database, and sum the space for missing pieces.
 	//
-	dbFname := fname + ".stats.db"
-	totalSizeBytes := uint64(queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats WHERE bytes_fetched != size",
-		dbFname))
+	totalSizeBytes := uint64(st.queryDBIntegerResult(
+		"SELECT SUM(size) FROM manifest_stats WHERE bytes_fetched != size"))
 
 	// Find how much local disk space is available
 	var stat syscall.Statfs_t
 	wd, err := os.Getwd()
-	check(err)
-	err2 := syscall.Statfs(wd, &stat)
-	check(err2)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Statfs(wd, &stat); err != nil {
+		return err
+	}
 
 	// Available blocks * size per block = available space in bytes
 	availableBytes := stat.Bavail * uint64(stat.Bsize)
 	if availableBytes < totalSizeBytes {
 		desc := fmt.Sprintf("Not enough disk space, available = %s, required = %s",
-			DiskSpaceString(availableBytes),
-			DiskSpaceString(totalSizeBytes))
+			diskSpaceString(availableBytes),
+			diskSpaceString(totalSizeBytes))
 		return errors.New(desc)
 	}
 	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s,  #free-inodes=%d\n",
-		DiskSpaceString(totalSizeBytes),
-		DiskSpaceString(availableBytes),
+		diskSpaceString(totalSizeBytes),
+		diskSpaceString(availableBytes),
 		stat.Ffree)
 	PrintLogAndOut(diskSpaceStr)
 	return nil
@@ -322,12 +335,13 @@ type DBPart struct {
 
 // CreateManifestDB ...
 func CreateManifestDB(fname string) {
-	m := ReadManifest(fname)
+	m := readManifest(fname)
 	statsFname := fname + ".stats.db?cache=shared&mode=rwc"
 	os.Remove(statsFname)
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	defer db.Close()
+
 	sqlStmt := `
 	CREATE TABLE manifest_stats (
 		file_id text,
@@ -345,7 +359,7 @@ func CreateManifestDB(fname string) {
 	_, err = db.Exec(sqlStmt)
 	check(err)
 
-	_, err = db.Exec("BEGIN TRANSACTION")
+	txn, err := db.Begin()
 	check(err)
 	for proj, files := range m {
 		for _, f := range files {
@@ -355,12 +369,12 @@ func CreateManifestDB(fname string) {
 				VALUES ('%s', '%s', '%s', '%s', %s, '%s', '%d', '%d', '%d', '%d');
 				`,
 					f.ID, proj, f.Name, f.Folder, pID, f.Parts[pID].MD5, f.Parts[pID].Size, f.Parts["1"].Size, 0, 0)
-				_, err = db.Exec(sqlStmt)
+				_, err = txn.Exec(sqlStmt)
 				check(err)
 			}
 		}
 	}
-	_, err = db.Exec("END TRANSACTION")
+	err = txn.Commit()
 	check(err)
 }
 
@@ -368,7 +382,7 @@ func CreateManifestDB(fname string) {
 // TODO: Optimize this for only files that need to be downloaded
 //
 // OQ: The 'urls' map is empty
-func PrepareFilesForDownload(m Manifest) map[string]DXDownloadURL {
+func (st *State) prepareFilesForDownload(m Manifest) map[string]DXDownloadURL {
 	urls := make(map[string]DXDownloadURL)
 	for _, files := range m {
 		for _, f := range files {
@@ -390,7 +404,6 @@ func PrepareFilesForDownload(m Manifest) map[string]DXDownloadURL {
 
 // JobInfo ...
 type JobInfo struct {
-	manifestFileName string
 	part             DBPart
 	wg               *sync.WaitGroup
 	urls             map[string]DXDownloadURL
@@ -401,7 +414,6 @@ func b2MB(bytes int) int { return bytes / (1024 * 1024) }
 
 // DownloadStatus ...
 type DownloadStatus struct {
-	DBFname          string
 	NumParts         int
 	NumBytes         int
 	NumPartsComplete int
@@ -416,21 +428,24 @@ type DownloadStatus struct {
 }
 
 // InitDownloadStatus ...
-func InitDownloadStatus(fname string) DownloadStatus {
+func (st *State) InitDownloadStatus() {
 	// total amounts to download, calculated once
-	dbFname := fname + ".stats.db"
-	var ds DownloadStatus
-	ds.DBFname = dbFname
-	ds.NumParts = queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats", dbFname)
-	ds.NumBytes = queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats", dbFname)
-	ds.ProgressInterval = time.Duration(5) * time.Second
-	ds.MaxWindowSize = int64(2 * 60 * 1000 * 1000 * 1000)
-	return ds
+	numParts := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats")
+	numBytes := st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_stats")
+
+	st.ds = &DownloadStatus{
+		NumParts : numParts,
+		NumBytes : numBytes,
+		NumPartsComplete : 0,
+		NumBytesComplete : 0,
+		ProgressInterval : time.Duration(5) * time.Second,
+		MaxWindowSize : int64(2 * 60 * 1000 * 1000 * 1000),
+	}
 }
 
 // Calculate bandwidth in MB/sec. Query the database, and find
 // all recently completed downloaded chunks.
-func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
+func (st *State) calcBandwidth(timeWindowNanoSec int64) float64 {
 	if timeWindowNanoSec < 1000 {
 		// sanity check; if the interval is very short, just return zero.
 		return 0.0
@@ -443,7 +458,7 @@ func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
 	query := fmt.Sprintf(
 		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE download_done_time > %d",
 		lowerBound)
-	bytesDownloadedInTimeWindow := queryDBIntegerResult(query, ds.DBFname)
+	bytesDownloadedInTimeWindow := st.queryDBIntegerResult(query)
 
 	// convert to megabytes downloaded divided by seconds
 	mbDownloaded := float64(bytesDownloadedInTimeWindow) / float64(1024*1024)
@@ -453,75 +468,76 @@ func calcBandwidth(ds *DownloadStatus, timeWindowNanoSec int64) float64 {
 
 // DownloadProgressOneTime ...
 // Report on progress so far
-func DownloadProgressOneTime(ds *DownloadStatus, timeWindowNanoSec int64) string {
+func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 	// query the current progrAddess
-	ds.NumBytesComplete = queryDBIntegerResult(
-		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size",
-		ds.DBFname)
-	ds.NumPartsComplete = queryDBIntegerResult(
-		"SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size",
-		ds.DBFname)
+	st.ds.NumBytesComplete = st.queryDBIntegerResult(
+		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size")
+	st.ds.NumPartsComplete = st.queryDBIntegerResult(
+		"SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched = size")
 
 	// calculate bandwitdh
-	bandwidthMBSec := calcBandwidth(ds, timeWindowNanoSec)
+	bandwidthMBSec := st.calcBandwidth(timeWindowNanoSec)
 
 	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)",
-		b2MB(ds.NumBytesComplete), b2MB(ds.NumBytes), ds.NumPartsComplete, ds.NumParts, bandwidthMBSec, timeWindowNanoSec/1e9)
+		b2MB(st.ds.NumBytesComplete), b2MB(st.ds.NumBytes),
+		st.ds.NumPartsComplete, st.ds.NumParts,
+		bandwidthMBSec,
+		timeWindowNanoSec/1e9)
 
 	return desc
 }
 
 // A loop that reports on download progress periodically.
-func downloadProgressContinuous(ds *DownloadStatus) {
+func (st *State) downloadProgressContinuous() {
 	// Start time of the measurements, in nano seconds
 	startTime := time.Now()
 
-	for ds.NumPartsComplete < ds.NumParts {
+	for st.ds.NumPartsComplete < st.ds.NumParts {
 		// Sleep for a number of seconds, so as to not flood the screen
 		// with messages. This also substantially limits the number
 		// of database queries.
-		time.Sleep(ds.ProgressInterval)
+		time.Sleep(st.ds.ProgressInterval)
 
 		// If we just started the measurements, we have a short
 		// history to examine. Limit the window size accordingly.
 		now := time.Now()
 		deltaNanoSec := now.UnixNano() - startTime.UnixNano()
-		if deltaNanoSec > ds.MaxWindowSize {
-			deltaNanoSec = ds.MaxWindowSize
+		if deltaNanoSec > st.ds.MaxWindowSize {
+			deltaNanoSec = st.ds.MaxWindowSize
 		}
-		desc := DownloadProgressOneTime(ds, deltaNanoSec)
+		desc := st.DownloadProgressOneTime(deltaNanoSec)
 		fmt.Printf(desc)
 	}
 }
 
-func worker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
+func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 	const secondsInYear int = 60 * 60 * 24 * 365
 	for j := range jobs {
-		mutex.Lock()
+		st.mutex.Lock()
 		if _, ok := j.urls[j.part.FileID]; !ok {
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
 
 			// TODO: 100 retries
-			body, err := DxAPI(&dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			body, err := DxAPI(&st.dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			check(err)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
 			j.urls[j.part.FileID] = u
 		}
-		mutex.Unlock()
+		st.mutex.Unlock()
 
 		// TODO: 25 retries
-		DownloadDBPart(j.manifestFileName, j.part, j.wg, j.urls, mutex)
+		st.downloadDBPart(j.part, j.wg, j.urls)
 	}
 	wg.Done()
 }
 
-func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *sync.WaitGroup) {
+func (st *State) fileIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 	for j := range jobs {
-		CheckDBPart(j.manifestFileName, j.part, j.wg, mutex)
+		st.checkDBPart(j.part, j.wg)
 
-		if dxEnv.DxJobId == "" {
+		if st.dxEnv.DxJobId == "" {
 			// running on a console, erase the previous line
 			// TODO: Get rid of this temporary space-padding fix for carriage returns
 			fmt.Printf("                                                                      \r")
@@ -534,29 +550,26 @@ func fileIntegrityWorker(id int, jobs <-chan JobInfo, mutex *sync.Mutex, wg *syn
 	wg.Done()
 }
 
-// DownloadManifestDB ...
-func DownloadManifestDB(fname string, opts Opts) {
-	timeOfLastError = time.Now().Second()
+// Download all the files that are mentioned in the manifest.
+func (st *State) DownloadManifestDB(fname string) {
+	st.timeOfLastError = time.Now().Second()
 	// TODO: Update to not require manifest structure read into memory
-	m := ReadManifest(fname)
+	m := readManifest(fname)
 
 	// TODO Log network settings and other helpful info for debugging
 
 	PrintLogAndOut("Preparing files for download\n")
-	urls := PrepareFilesForDownload(m)
-	statsFname := fname + ".stats.db"
-	runtime.GOMAXPROCS(opts.NumThreads)
+	urls := st.prepareFilesForDownload(m)
 
-	PrintLogAndOut(fmt.Sprintf("Downloading files using %d threads\n", opts.NumThreads))
+	// Limit the number of threads
+	runtime.GOMAXPROCS(st.opts.NumThreads)
+	PrintLogAndOut(fmt.Sprintf("Downloading files using %d threads\n", st.opts.NumThreads))
 
-	db, err := sql.Open("sqlite3", statsFname)
+	cnt := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched != size")
+	rows, err := st.db.Query("SELECT * FROM manifest_stats WHERE bytes_fetched != size")
 	check(err)
-	cnt := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched != size", statsFname)
-	check(err)
-	rows, err := db.Query("SELECT * FROM manifest_stats WHERE bytes_fetched != size")
 
 	jobs := make(chan JobInfo, cnt)
-
 	var wg sync.WaitGroup
 
 	for i := 1; rows.Next(); i++ {
@@ -565,7 +578,6 @@ func DownloadManifestDB(fname string, opts Opts) {
 			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
-		j.manifestFileName = fname
 		j.part = p
 		j.wg = &wg
 		j.urls = urls
@@ -574,31 +586,26 @@ func DownloadManifestDB(fname string, opts Opts) {
 	}
 	close(jobs)
 	rows.Close()
-	db.Close()
 
-	for w := 1; w <= opts.NumThreads; w++ {
+	for w := 1; w <= st.opts.NumThreads; w++ {
 		wg.Add(1)
-		go worker(w, jobs, mutex, &wg)
+		go st.worker(w, jobs, &wg)
 	}
 
-	ds = InitDownloadStatus(fname)
+	st.InitDownloadStatus()
+
 	//go downloadProgressContinuous(&ds)
 	wg.Wait()
-	PrintLogAndOut(DownloadProgressOneTime(&ds, 60*1000*1000*1000) + "\n")
+	PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
 	PrintLogAndOut("Download completed successfully.\n")
 	PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
 
 }
 
 // CheckFileIntegrity ...
-func CheckFileIntegrity(fname string, opts Opts) {
-	statsFname := fname + ".stats.db"
-
-	db, err := sql.Open("sqlite3", statsFname)
-	check(err)
-	cnt := queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched == size", statsFname)
-	check(err)
-	rows, err := db.Query("SELECT * FROM manifest_stats WHERE bytes_fetched == size")
+func (st *State) CheckFileIntegrity() {
+	cnt := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched == size")
+	rows, err := st.db.Query("SELECT * FROM manifest_stats WHERE bytes_fetched == size")
 
 	jobs := make(chan JobInfo, cnt)
 
@@ -610,7 +617,6 @@ func CheckFileIntegrity(fname string, opts Opts) {
 			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
-		j.manifestFileName = fname
 		j.part = p
 		j.wg = &wg
 		j.tmpid = i
@@ -618,26 +624,19 @@ func CheckFileIntegrity(fname string, opts Opts) {
 	}
 	close(jobs)
 	rows.Close()
-	db.Close()
 
-	var mutex = &sync.Mutex{}
-	for w := 1; w <= opts.NumThreads; w++ {
+	for w := 1; w <= st.opts.NumThreads; w++ {
 		wg.Add(1)
-		go fileIntegrityWorker(w, jobs, mutex, &wg)
+		go st.fileIntegrityWorker(w, jobs, &wg)
 	}
 	wg.Wait()
 	fmt.Println("")
 	fmt.Println("Integrity check complete.")
 }
 
-// UpdateDBPart ...
-func UpdateDBPart(manifestFileName string, p DBPart) {
-	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
-	statsFname := manifestFileName + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
-	db, err := sql.Open("sqlite3", statsFname)
-	check(err)
-	defer db.Close()
-	tx, err := db.Begin()
+// UpdateDBPart. Locking is done by the database.
+func (st *State) updateDBPart(p DBPart) {
+	tx, err := st.db.Begin()
 	check(err)
 	defer tx.Commit()
 
@@ -650,13 +649,11 @@ func UpdateDBPart(manifestFileName string, p DBPart) {
 }
 
 // ResetDBPart ...
-func ResetDBPart(manifestFileName string, p DBPart) {
-	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
-	statsFname := manifestFileName + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
-	db, err := sql.Open("sqlite3", statsFname)
-	check(err)
-	defer db.Close()
-	tx, err := db.Begin()
+func (st *State) resetDBPart(p DBPart) {
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
+	tx, err := st.db.Begin()
 	check(err)
 	defer tx.Commit()
 
@@ -664,17 +661,14 @@ func ResetDBPart(manifestFileName string, p DBPart) {
 		"UPDATE manifest_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s' AND part_id = '%d'",
 		p.FileID, p.PartID))
 	check(err)
-
 }
 
 // ResetDBFile ...
-func ResetDBFile(manifestFileName string, p DBPart) {
-	// statsFname := "file:" + manifestFileName + ".stats.db?cache=shared&mode=rwc"
-	statsFname := manifestFileName + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
-	db, err := sql.Open("sqlite3", statsFname)
-	check(err)
-	defer db.Close()
-	tx, err := db.Begin()
+func (st *State) resetDBFile(p DBPart) {
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
+	tx, err := st.db.Begin()
 	check(err)
 	defer tx.Commit()
 
@@ -684,8 +678,12 @@ func ResetDBFile(manifestFileName string, p DBPart) {
 	check(err)
 }
 
-// DownloadDBPart ...
-func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls map[string]DXDownloadURL, mutex *sync.Mutex) error {
+// Download part of a file
+func (st *State) downloadDBPart(
+	p DBPart,
+	wg *sync.WaitGroup,
+	urls map[string]DXDownloadURL) error {
+
 	timer := time.AfterFunc(10*time.Minute, func() {
 		panic("Timeout for downloading part exceeded.")
 	})
@@ -697,9 +695,9 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1)
 
 	// TODO: Avoid locking here?
-	mutex.Lock()
+	st.mutex.Lock()
 	u := urls[p.FileID]
-	mutex.Unlock()
+	st.mutex.Unlock()
 
 	for k, v := range u.Headers {
 		headers[k] = v
@@ -711,13 +709,11 @@ func DownloadDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, urls 
 	_, err = localf.Write(body)
 	check(err)
 	localf.Close()
-	// TODO: This lock should not be required ideally. I don't know why sqlite3 is complaining here
-	mutex.Lock()
-	UpdateDBPart(manifestFileName, p)
-	mutex.Unlock()
-	progressStr := DownloadProgressOneTime(&ds, 60*1000*1000*1000)
 
-	if dxEnv.DxJobId == "" {
+	st.updateDBPart(p)
+	progressStr := st.DownloadProgressOneTime(60*1000*1000*1000)
+
+	if st.dxEnv.DxJobId == "" {
 		// running on a console, erase the previous line
 		// TODO: Get rid of this temporary space-padding fix for carriage returns
 		fmt.Printf("                                                                      \r")
@@ -770,13 +766,11 @@ func dxHttpRequestChecksum(
 	return nil, err
 }
 
-// CheckDBPart ...
-func CheckDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, mutex *sync.Mutex) {
+// check that a database part has the correct md5 checksum
+func (st *State) checkDBPart(p DBPart, wg *sync.WaitGroup) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
-		mutex.Lock()
-		ResetDBFile(manifestFileName, p)
-		mutex.Unlock()
+		st.resetDBFile(p)
 		fmt.Printf("File %s does not exist. Please re-issue the download command to resolve.", fname)
 	} else {
 		localf, err := os.Open(fname)
@@ -789,11 +783,8 @@ func CheckDBPart(manifestFileName string, p DBPart, wg *sync.WaitGroup, mutex *s
 		localf.Close()
 
 		if md5str(body) != p.MD5 {
-			// TODO: This lock should not be required ideally. I don't know why sqlite3 is complaining here
 			fmt.Printf("Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.\n", p.FileName, p.PartID)
-			mutex.Lock()
-			ResetDBPart(manifestFileName, p)
-			mutex.Unlock()
+			st.resetDBPart(p)
 		}
 	}
 }

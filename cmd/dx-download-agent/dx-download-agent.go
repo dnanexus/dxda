@@ -54,19 +54,25 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		os.Exit(1)
 	}
 	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
-	dxda.SetDxEnvironment(dxEnv)
 
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
+
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
 		dxda.CreateManifestDB(fname)
 	}
-	if err := dxda.CheckDiskSpace(fname); err != nil {
+
+	st := dxda.Init(dxEnv, fname, opts)
+	defer st.Close()
+
+	if err := st.CheckDiskSpace(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	dxda.DownloadManifestDB(fname, opts)
+
+	st.DownloadManifestDB(fname)
+
 	return subcommands.ExitSuccess
 }
 
@@ -91,8 +97,21 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		os.Exit(1)
 	}
 	fname := f.Args()[0]
-	ds := dxda.InitDownloadStatus(fname)
-	fmt.Println(dxda.DownloadProgressOneTime(&ds, 60*1000*1000*1000))
+
+	dxEnv, _, err := dxda.GetDxEnvironment()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	var opts dxda.Opts
+	opts.NumThreads = p.maxThreads
+
+	st := dxda.Init(dxEnv, fname, opts)
+	defer st.Close()
+
+	st.InitDownloadStatus()
+	fmt.Println(st.DownloadProgressOneTime(60*1000*1000*1000))
 	return subcommands.ExitSuccess
 }
 
@@ -121,10 +140,19 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	}
 	fname := f.Args()[0]
 
+	dxEnv, _, err := dxda.GetDxEnvironment()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 
-	dxda.CheckFileIntegrity(fname, opts)
+	st := dxda.Init(dxEnv, fname, opts)
+	defer st.Close()
+
+	st.CheckFileIntegrity()
 	return subcommands.ExitSuccess
 }
 
