@@ -54,19 +54,25 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		os.Exit(1)
 	}
 	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
-	dxda.SetDxEnvironment(dxEnv)
 
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
+
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
 		dxda.CreateManifestDB(fname)
 	}
-	if err := dxda.CheckDiskSpace(fname); err != nil {
+
+	dxSt := dxda.Init(dxEnv, fname, opts)
+	defer st.Close()
+
+	if err := dxSt.CheckDiskSpace(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	dxda.DownloadManifestDB(fname, opts)
+
+	dxSt.DownloadManifestDB()
+
 	return subcommands.ExitSuccess
 }
 
@@ -124,7 +130,8 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 
-	dxda.CheckFileIntegrity(fname, opts)
+	dxSt := dxda.Init(dxEnv, fname, opts)
+	dxSt.CheckFileIntegrity()
 	return subcommands.ExitSuccess
 }
 
