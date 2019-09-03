@@ -204,9 +204,10 @@ type DXPart struct {
 
 // Initialize the state
 func Init(dxEnv DXEnvironment, fname string, opts Opts) *State {
-	statsFname := fname + ".stats.db?cache=shared&mode=rwc"
+	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
+	db.SetMaxOpenConns(1)
 
 	return &State {
 		dxEnv : dxEnv,
@@ -336,7 +337,7 @@ type DBPart struct {
 // CreateManifestDB ...
 func CreateManifestDB(fname string) {
 	m := readManifest(fname)
-	statsFname := fname + ".stats.db?cache=shared&mode=rwc"
+	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	os.Remove(statsFname)
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -636,6 +637,9 @@ func (st *State) CheckFileIntegrity() {
 
 // UpdateDBPart. Locking is done by the database.
 func (st *State) updateDBPart(p DBPart) {
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
 	tx, err := st.db.Begin()
 	check(err)
 	defer tx.Commit()
