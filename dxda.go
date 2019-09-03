@@ -204,9 +204,10 @@ type DXPart struct {
 
 // Initialize the state
 func Init(dxEnv DXEnvironment, fname string, opts Opts) *State {
-	statsFname := fname + ".stats.db?cache=shared&mode=rwc"
+	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
+	db.SetMaxOpenConns(1)
 
 	return &State {
 		dxEnv : dxEnv,
@@ -224,6 +225,9 @@ func (st *State) Close() {
 
 // Probably a better way to do this :)
 func (st *State) queryDBIntegerResult(query string) int {
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
 	rows, err := st.db.Query(query)
 	check(err)
 
@@ -336,7 +340,7 @@ type DBPart struct {
 // CreateManifestDB ...
 func CreateManifestDB(fname string) {
 	m := readManifest(fname)
-	statsFname := fname + ".stats.db?cache=shared&mode=rwc"
+	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	os.Remove(statsFname)
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -566,7 +570,10 @@ func (st *State) DownloadManifestDB(fname string) {
 	PrintLogAndOut(fmt.Sprintf("Downloading files using %d threads\n", st.opts.NumThreads))
 
 	cnt := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched != size")
+
+	st.mutex.Lock()
 	rows, err := st.db.Query("SELECT * FROM manifest_stats WHERE bytes_fetched != size")
+	st.mutex.Unlock()
 	check(err)
 
 	jobs := make(chan JobInfo, cnt)
@@ -605,7 +612,10 @@ func (st *State) DownloadManifestDB(fname string) {
 // CheckFileIntegrity ...
 func (st *State) CheckFileIntegrity() {
 	cnt := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_stats WHERE bytes_fetched == size")
+	st.mutex.Lock()
 	rows, err := st.db.Query("SELECT * FROM manifest_stats WHERE bytes_fetched == size")
+	st.mutex.Unlock()
+	check(err)
 
 	jobs := make(chan JobInfo, cnt)
 
@@ -636,6 +646,9 @@ func (st *State) CheckFileIntegrity() {
 
 // UpdateDBPart. Locking is done by the database.
 func (st *State) updateDBPart(p DBPart) {
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
 	tx, err := st.db.Begin()
 	check(err)
 	defer tx.Commit()
