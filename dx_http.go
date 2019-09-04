@@ -86,11 +86,17 @@ func isRetryable(status string) bool {
 }
 
 
-func newHttpClient() *retryablehttp.Client {
+// These clients are intended for reuse in the same host. Throwing them
+// away will gradually leak file descriptors.
+func NewHttpClient(pooled bool) *retryablehttp.Client {
 	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
 	if localCertFile == "" {
+		client := cleanhttp.DefaultClient()
+		if pooled {
+			client = cleanhttp.DefaultPooledClient()
+		}
 		return &retryablehttp.Client{
-			HTTPClient:   cleanhttp.DefaultClient(),
+			HTTPClient:   client,
 			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
 			RetryWaitMin: minRetryTime * time.Second,
 			RetryWaitMax: maxRetryTime * time.Second,
@@ -127,6 +133,9 @@ func newHttpClient() *retryablehttp.Client {
 	}
 
 	tr := cleanhttp.DefaultTransport()
+	if pooled {
+		tr = cleanhttp.DefaultPooledTransport()
+	}
 	tr.TLSClientConfig = config
 
 	return &retryablehttp.Client{
@@ -147,11 +156,6 @@ func dxHttpRequestCore(
 	url string,
 	headers map[string]string,
 	data []byte) (body []byte, err error, status string) {
-
-	if client == nil {
-		// The client is not provided, create a fresh one
-		client = newHttpClient()
-	}
 
 	// Safety procedure to force timeout to prevent hanging
 	ctx, cancel := context.WithCancel(context.TODO())

@@ -517,7 +517,7 @@ func (st *State) downloadProgressContinuous() {
 func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 	// Create one http client per worker. This should, hopefully, allow
 	// caching open TCP/HTTP connections, reducing startup times.
-	httpClient := newHttpClient()
+	httpClient := NewHttpClient(true)
 	const secondsInYear int = 60 * 60 * 24 * 365
 
 	for j := range jobs {
