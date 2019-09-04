@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/bzip2"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,9 +22,8 @@ import (
 	"syscall"
 	"time"
 
-	"database/sql"
-
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
+	"github.com/hashicorp/go-retryablehttp" // http client library
 )
 
 // A subset of the configuration parameters that the dx-toolkit uses.
@@ -515,7 +515,11 @@ func (st *State) downloadProgressContinuous() {
 }
 
 func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
+	// Create one http client per worker. This should, hopefully, allow
+	// caching open TCP/HTTP connections, reducing startup times.
+	httpClient := newHttpClient()
 	const secondsInYear int = 60 * 60 * 24 * 365
+
 	for j := range jobs {
 		st.mutex.Lock()
 		if _, ok := j.urls[j.part.FileID]; !ok {
@@ -523,7 +527,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 				j.part.Project, secondsInYear)
 
 			// TODO: 100 retries
-			body, err := DxAPI(&st.dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			body, err := DxAPI(httpClient, &st.dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
 			check(err)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
@@ -532,7 +536,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 		st.mutex.Unlock()
 
 		// TODO: 25 retries
-		st.downloadDBPart(j.part, j.wg, j.urls)
+		st.downloadDBPart(httpClient, j.part, j.wg, j.urls)
 	}
 	wg.Done()
 }
@@ -693,6 +697,7 @@ func (st *State) resetDBFile(p DBPart) {
 
 // Download part of a file
 func (st *State) downloadDBPart(
+	httpClient *retryablehttp.Client,
 	p DBPart,
 	wg *sync.WaitGroup,
 	urls map[string]DXDownloadURL) error {
@@ -715,7 +720,7 @@ func (st *State) downloadDBPart(
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
-	body, err := dxHttpRequestChecksum("GET", u.URL, headers, []byte("{}"), &p)
+	body, err := dxHttpRequestChecksum(httpClient, "GET", u.URL, headers, []byte("{}"), &p)
 	check(err)
 	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
 	check(err)
@@ -742,6 +747,7 @@ func (st *State) downloadDBPart(
 // Add retries around the core http-request method
 //
 func dxHttpRequestChecksum(
+	httpClient *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
@@ -749,7 +755,7 @@ func dxHttpRequestChecksum(
 	p *DBPart) (body []byte, err error) {
 	tCnt := 0
 	for tCnt < 3 {
-		body, err := DxHttpRequest(requestType, url, headers, data)
+		body, err := DxHttpRequest(httpClient, requestType, url, headers, data)
 		if err != nil {
 			return nil, err
 		}
