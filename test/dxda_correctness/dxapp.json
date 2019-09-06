@@ -1,0 +1,34 @@
+{
+  "name": "dxda_correctness",
+  "summary": "test dx-download-agent correctness by comparing to dx-download",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "verbose",
+      "class": "boolean",
+      "optional": true
+    },
+    {
+      "name": "manifest",
+      "class": "file"
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "equality",
+      "class": "boolean"
+    },
+    {
+      "name": "result",
+      "class": "file",
+      "optional": true
+    }
+  ],
+  "runSpec": {
+    "interpreter": "bash",
+    "file": "code.sh",
+    "distribution": "Ubuntu",
+    "release": "16.04"
+  }
+}
