@@ -522,7 +522,10 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 
 	for j := range jobs {
 		st.mutex.Lock()
-		if _, ok := j.urls[j.part.FileID]; !ok {
+		_, ok := j.urls[j.part.FileID]
+		st.mutex.Unlock()
+
+		if !ok {
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
 
@@ -531,9 +534,11 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 			check(err)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
+
+			st.mutex.Lock()
 			j.urls[j.part.FileID] = u
+			st.mutex.Unlock()
 		}
-		st.mutex.Unlock()
 
 		// TODO: 25 retries
 		st.downloadDBPart(httpClient, j.part, j.wg, j.urls)
@@ -552,7 +557,7 @@ func (st *State) fileIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.WaitG
 			fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
 		} else {
 			// We are on a dx-job, and we want to see the history of printouts
-			fmt.Printf("%s:%d\n")
+			fmt.Printf("%s:%d\n", j.part.FileName, j.part.PartID)
 		}
 	}
 	wg.Done()
