@@ -59,11 +59,6 @@ func isGood(status string) bool {
 func isRetryable(status string) bool {
 	statusNum := httpStatus2number(status)
 	switch statusNum {
-	case 206:
-		// A partial read. This is considered a failure, causing the entire
-		// read to be retried.
-		return true
-
 	case 408:
 		// Request timeout
 		return true
@@ -74,6 +69,10 @@ func isRetryable(status string) bool {
 
 	case 429:
 		// rate throttling
+		return true
+
+	case 503:
+		// platform is temporarily down
 		return true
 
 	case 504:
@@ -180,7 +179,7 @@ func dxHttpRequestCore(
 	body, _ = ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	// If the is not in the 200-299 range, an error occured.
+	// If the status is not in the 200-299 range, an error occured.
 	if !(isGood(status)) {
 		return nil, nil, status
 	}
@@ -197,10 +196,22 @@ func DxHttpRequest(
 	url string,
 	headers map[string]string,
 	data []byte) (body []byte, err error) {
-	tCnt := 0
-	for tCnt < maxNumAttempts {
+
+	var tCnt int
+	for tCnt = 0; tCnt < maxNumAttempts; tCnt++ {
+		if tCnt > 0 {
+			// sleep before retrying
+			time.Sleep(attemptTimeout * time.Second)
+		}
+
 		body, err, status := dxHttpRequestCore(client, requestType, url, headers, data)
+		if err == context.Canceled ||
+			err == context.DeadlineExceeded {
+			// a timeout expired, we can retry.
+			continue
+		}
 		if err != nil {
+			log.Printf(err.Error())
 			return nil, err
 		}
 		if isGood(status) {
@@ -208,19 +219,15 @@ func DxHttpRequest(
 		}
 		err = fmt.Errorf("%s request to '%s' failed with status %s",
 			requestType, url, status)
-		log.Printf(err.Error() + "\n")
+		log.Printf(err.Error())
 
 		// check if this is a retryable error.
-		if !(isRetryable(status)) {
+		if !isRetryable(status) {
 			return nil, err
 		}
-
-		// sleep before retrying
-		time.Sleep(attemptTimeout * time.Second)
-		tCnt++
 	}
 
-	err = fmt.Errorf("%s request to '%s' failed after % attempts",
+	err = fmt.Errorf("%s request to '%s' failed after %d attempts",
 		requestType, url, tCnt)
 	return nil, err
 }
