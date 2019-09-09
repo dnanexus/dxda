@@ -22,10 +22,11 @@ import (
 const minRetryTime = 1   // seconds
 const maxRetryTime = 120 // seconds
 const maxRetryCount = 10
-const userAgent = "dxfs2: DNAnexus FUSE filesystem"
+const userAgent = "dxda: DNAnexus download agent"
 const reqTimeout = 15  // seconds
-const maxNumAttempts = 3
-const attemptTimeout = 5 // seconds
+const maxNumAttempts = 10
+const attemptTimeoutInit = 2 // seconds
+const attemptTimeoutMax = 600 // seconds, amounting to 10 minutes
 
 // A web status looks like: "200 OK"
 // we want the 200 as an integer
@@ -69,6 +70,15 @@ func isRetryable(status string) bool {
 
 	case 429:
 		// rate throttling
+		return true
+
+	case 500:
+		// server internal error.
+		//
+		// This seems like a fatal error, however,
+		// we have seen the platform return these errors
+		// sporadically. For example, if there is a JSON parsing
+		// error on the request due to corruption.
 		return true
 
 	case 503:
@@ -197,11 +207,14 @@ func DxHttpRequest(
 	headers map[string]string,
 	data []byte) (body []byte, err error) {
 
+	var attemptTimeout int = attemptTimeoutInit
 	var tCnt int
-	for tCnt = 0; tCnt < maxNumAttempts; tCnt++ {
+	var status int
+	for tCnt = 0; tCnt < maxNumAttempts && attemptTimeout < attemptTimeoutMax; tCnt++ {
 		if tCnt > 0 {
 			// sleep before retrying
-			time.Sleep(attemptTimeout * time.Second)
+			time.Sleep(time.Duration(attemptTimeout) * time.Second)
+			attemptTimeout *= 2
 		}
 
 		body, err, status := dxHttpRequestCore(client, requestType, url, headers, data)
@@ -227,8 +240,8 @@ func DxHttpRequest(
 		}
 	}
 
-	err = fmt.Errorf("%s request to '%s' failed after %d attempts",
-		requestType, url, tCnt)
+	err = fmt.Errorf("%s request to '%s' failed after %d attempts, status=%d",
+		requestType, url, tCnt, status)
 	return nil, err
 }
 
