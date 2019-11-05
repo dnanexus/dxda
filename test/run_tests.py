@@ -114,9 +114,9 @@ def run_correctness(dx_proj):
     extract_results(jobs)
 
 def main():
-    argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfs2")
+    argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxda")
     argparser.add_argument("--project", help="DNAnexus project",
-                           default="dxfs2_test_data")
+                           default="dxfuse_test_data")
     args = argparser.parse_args()
 
     dx_proj = get_project(args.project)

@@ -6,6 +6,7 @@ package dxda
 import (
 	"bytes"
 	"compress/bzip2"
+	"context"
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
@@ -44,6 +45,11 @@ type State struct {
 	ds              *DownloadStatus
 	timeOfLastError  int
 }
+
+const (
+	// An http request should never take more than 10 minutes.
+	requestOverallTimout = 10 * time.Minute
+)
 
 func check(e error) {
 	if e != nil {
@@ -530,7 +536,12 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 				j.part.Project, secondsInYear)
 
 			// TODO: 100 retries
-			body, err := DxAPI(httpClient, &st.dxEnv, fmt.Sprintf("%s/download", j.part.FileID), payload)
+			body, err := DxAPI(
+				context.TODO(),
+				httpClient,
+				&st.dxEnv,
+				fmt.Sprintf("%s/download", j.part.FileID),
+				payload)
 			check(err)
 			var u DXDownloadURL
 			json.Unmarshal(body, &u)
@@ -759,8 +770,16 @@ func dxHttpRequestChecksum(
 	data []byte,
 	p *DBPart) (body []byte, err error) {
 	tCnt := 0
+
+	// Safety procedure to force timeout to prevent hanging
+	ctx, cancel := context.WithCancel(context.TODO())
+	timer := time.AfterFunc(requestOverallTimout, func() {
+		cancel()
+	})
+	defer timer.Stop()
+
 	for tCnt < 3 {
-		body, err := DxHttpRequest(httpClient, requestType, url, headers, data)
+		body, err := DxHttpRequest(ctx, httpClient, requestType, url, headers, data)
 		if err != nil {
 			return nil, err
 		}
@@ -784,6 +803,7 @@ func dxHttpRequestChecksum(
 		log.Printf("MD5 string of part ID %d does not match stored MD5sum. Retrying.", p.PartID)
 		tCnt++
 	}
+
 
 	err = fmt.Errorf("%s request to '%s' failed after %d attempts",
 		requestType, url, tCnt)
