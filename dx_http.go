@@ -160,17 +160,12 @@ func NewHttpClient(pooled bool) *retryablehttp.Client {
 
 
 func dxHttpRequestCore(
+	ctx context.Context,
 	client *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
 	data []byte) (body []byte, err error, status string) {
-
-	// Safety procedure to force timeout to prevent hanging
-	ctx, cancel := context.WithCancel(context.TODO())
-	timer := time.AfterFunc(reqTimeout * time.Second, func() {
-		cancel()
-	})
 	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, err, ""
@@ -180,7 +175,7 @@ func dxHttpRequestCore(
 		req.Header.Set(header, value)
 	}
 	resp, err := client.Do(req)
-	timer.Stop()
+
 	if err != nil {
 		return nil, err, ""
 	}
@@ -201,6 +196,7 @@ func dxHttpRequestCore(
 // Add retries around the core http-request method
 //
 func DxHttpRequest(
+	ctx context.Context,
 	client *retryablehttp.Client,
 	requestType string,
 	url string,
@@ -217,12 +213,7 @@ func DxHttpRequest(
 			attemptTimeout *= 2
 		}
 
-		body, err, status := dxHttpRequestCore(client, requestType, url, headers, data)
-		if err == context.Canceled ||
-			err == context.DeadlineExceeded {
-			// a timeout expired, we can retry.
-			continue
-		}
+		body, err, status := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
 		if err != nil {
 			log.Printf(err.Error())
 			return nil, err
@@ -248,6 +239,7 @@ func DxHttpRequest(
 
 // DxAPI - Function to wrap a generic API call to DNAnexus
 func DxAPI(
+	ctx context.Context,
 	client *retryablehttp.Client,
 	dxEnv *DXEnvironment,
 	api string,
@@ -266,5 +258,5 @@ func DxAPI(
 		dxEnv.ApiServerHost,
 		dxEnv.ApiServerPort,
 		api)
-	return DxHttpRequest(client, "POST", url, headers, []byte(payload))
+	return DxHttpRequest(ctx, client, "POST", url, headers, []byte(payload))
 }
