@@ -19,14 +19,17 @@ import (
 	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
-const minRetryTime = 1   // seconds
-const maxRetryTime = 120 // seconds
-const maxRetryCount = 10
-const userAgent = "dxda: DNAnexus download agent"
-const reqTimeout = 15  // seconds
-const maxNumAttempts = 10
-const attemptTimeoutInit = 2 // seconds
-const attemptTimeoutMax = 600 // seconds, amounting to 10 minutes
+const (
+	minRetryTime = 1   // seconds
+	maxRetryTime = 120 // seconds
+	maxRetryCount = 10
+	userAgent = "dxda: DNAnexus download agent"
+	reqTimeout = 15  // seconds
+	maxNumAttempts = 10
+	attemptTimeoutInit = 2 // seconds
+	attemptTimeoutMax = 600 // seconds, amounting to 10 minutes
+	maxErrorBodyLen = 4 * 1024
+)
 
 // A web status looks like: "200 OK"
 // we want the 200 as an integer
@@ -158,7 +161,7 @@ func NewHttpClient(pooled bool) *retryablehttp.Client {
 	}
 }
 
-
+// returns: data, error, status
 func dxHttpRequestCore(
 	ctx context.Context,
 	client *retryablehttp.Client,
@@ -175,7 +178,6 @@ func dxHttpRequestCore(
 		req.Header.Set(header, value)
 	}
 	resp, err := client.Do(req)
-
 	if err != nil {
 		return nil, err, ""
 	}
@@ -186,7 +188,10 @@ func dxHttpRequestCore(
 
 	// If the status is not in the 200-299 range, an error occured.
 	if !(isGood(status)) {
-		return nil, nil, status
+		// we want to return the body of the error.
+		// make sure it isn't very long
+		err = errors.New(string(body[0 : maxErrorBodyLen]))
+		return nil, err, status
 	}
 
 	return body, nil, status
@@ -195,17 +200,19 @@ func dxHttpRequestCore(
 
 // Add retries around the core http-request method
 //
+// returns: (data, error, status)
 func DxHttpRequest(
 	ctx context.Context,
 	client *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) (body []byte, err error) {
+	data []byte) ([]byte, error) {
 
 	var attemptTimeout int = attemptTimeoutInit
 	var tCnt int
-	var status int
+	var status string
+	var err error
 	for tCnt = 0; tCnt < maxNumAttempts && attemptTimeout < attemptTimeoutMax; tCnt++ {
 		if tCnt > 0 {
 			// sleep before retrying
@@ -221,9 +228,11 @@ func DxHttpRequest(
 		if isGood(status) {
 			return body, nil
 		}
-		err = fmt.Errorf("%s request to '%s' failed with status %s",
-			requestType, url, status)
-		log.Printf(err.Error())
+		log.Printf("%s request to '%s' failed with status %s", requestType, url, status)
+		if status != "" {
+			// attach status to error message
+			err = fmt.Errorf("status=%s , body=%s", status, err.Error())
+		}
 
 		// check if this is a retryable error.
 		if !isRetryable(status) {
@@ -231,19 +240,21 @@ func DxHttpRequest(
 		}
 	}
 
-	err = fmt.Errorf("%s request to '%s' failed after %d attempts, status=%d",
+	log.Printf("%s request to '%s' failed after %d attempts, status=%s",
 		requestType, url, tCnt, status)
 	return nil, err
 }
 
 
 // DxAPI - Function to wrap a generic API call to DNAnexus
+//
+// returns: (data, error)
 func DxAPI(
 	ctx context.Context,
 	client *retryablehttp.Client,
 	dxEnv *DXEnvironment,
 	api string,
-	payload string) (body []byte, err error) {
+	payload string) ([]byte, error) {
 	if (dxEnv.Token == "") {
 		err := errors.New("The token is not set. This may be because the environment isn't set.")
 		return nil, err
