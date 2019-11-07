@@ -14,7 +14,15 @@ from dxpy.exceptions import DXJobFailureError
 
 # The list of instance types to test on. We don't want too many, because it will be expensive.
 # We are trying to take a representative from small, medium, and large instances.
-instance_types = ["mem1_ssd1_x4", "mem1_ssd1_x16", "mem3_ssd1_x32"]
+aws_ladder = {
+    "small" : ["mem1_ssd1_x4"],
+    "large" : ["mem1_ssd1_x4", "mem1_ssd1_x16", "mem3_ssd1_x32"]
+}
+
+azure_ladder = {
+    "small" : ["azure:mem1_ssd1_x4"],
+    "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
+}
 
 def lookup_applet(name, project, folder):
     applets = dxpy.bindings.search.find_data_objects(classname="applet",
@@ -79,7 +87,7 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch_and_wait(project, applet):
+def launch_and_wait(project, applet, instance_types):
     # Run the workflows
     jobs=[]
     print("Launching correctness applet")
@@ -108,19 +116,38 @@ def extract_results(jobs):
         result = desc['output']['equality']
         print("{}, {}".format(i_type, result))
 
-def run_correctness(dx_proj):
+def run_correctness(dx_proj, instance_types):
     applet = lookup_applet("dxda_correctness", dx_proj, "/applets")
-    jobs = launch_and_wait(dx_proj, applet)
+    jobs = launch_and_wait(dx_proj, applet, instance_types)
     extract_results(jobs)
 
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxda")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
+    argparser.add_argument("--size", help="how large should the test be? [small, large]",
+                           default="small")
     args = argparser.parse_args()
 
     dx_proj = get_project(args.project)
-    run_correctness(dx_proj)
+
+    # figure out which region we are operating in
+    region = dx_proj.describe()["region"]
+    scale = None
+    if region.startswith("aws:"):
+        scale = aws_ladder
+    elif region.startswith("azure"):
+        scale = azure_ladder
+    else:
+        raise Exception("unknown region {}".format(region))
+
+    if args.size in scale.keys():
+        instance_types = scale[args.size]
+    else:
+        print("Unknown size value {}".format(args.scale))
+        exit(1)
+
+    run_correctness(dx_proj, instance_types)
 
 if __name__ == '__main__':
     main()
