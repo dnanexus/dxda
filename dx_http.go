@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"strings"
 	"fmt"
@@ -19,34 +20,79 @@ import (
 	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
-const minRetryTime = 1   // seconds
-const maxRetryTime = 120 // seconds
-const maxRetryCount = 10
-const userAgent = "dxda: DNAnexus download agent"
-const reqTimeout = 15  // seconds
-const maxNumAttempts = 10
-const attemptTimeoutInit = 2 // seconds
-const attemptTimeoutMax = 600 // seconds, amounting to 10 minutes
+const (
+	minRetryTime = 1   // seconds
+	maxRetryTime = 120 // seconds
+	maxRetryCount = 10
+	userAgent = "dxda: DNAnexus download agent"
+	reqTimeout = 15  // seconds
+	attemptTimeoutInit = 2 // seconds
+	attemptTimeoutMax = 600 // seconds
+	maxSizeResponse = 16 * 1024
+)
+
+type HttpError struct {
+	Message []byte
+	StatusCode int
+	StatusHumanReadable string
+}
+
+type DxErrorJsonInternal struct {
+	EType    string `json:"type"`
+	Message  string `json:"message"`
+}
+
+type DxErrorJson struct {
+	E  DxErrorJsonInternal `json:"error"`
+}
+
+type DxError struct {
+	EType    string
+	Message  string
+	HttpCode int
+	HttpCodeHumanReadable string
+}
+
+
+// implement the error interface
+func (hErr *HttpError) Error() string {
+	return fmt.Sprintf("HttpError: message=%s status=%d %s",
+		hErr.Message, hErr.StatusCode, hErr.StatusHumanReadable)
+}
+func (dxErr *DxError) Error() string {
+	return fmt.Sprintf("DxError: type=%s message=%s status=%d %s",
+		dxErr.EType, dxErr.Message, dxErr.HttpCode, dxErr.HttpCodeHumanReadable)
+}
 
 // A web status looks like: "200 OK"
-// we want the 200 as an integer
-func httpStatus2number(status string) int {
+// we want the 200 as an integer, and "OK" as a description
+func parseStatus(status string) (int, string) {
 	elements := strings.Split(status, " ")
 	if len(elements) == 0 {
-		panic(fmt.Errorf("invalid status %s", status))
+		panic(fmt.Errorf("invalid status (%s)", status))
 	}
 	num, err := strconv.Atoi(elements[0])
 	if err != nil {
 		panic(err)
 	}
-	return num
+
+	var rest string
+	if len(elements) > 1 {
+		rest = strings.Join(elements[1:], " ")
+	}
+	return num, rest
 }
 
+func minInt(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
 
 // Good status is in the range 2xx
-func isGood(status string) bool {
-	statusNum := httpStatus2number(status)
-	switch statusNum {
+func isGood(status int) bool {
+	switch status {
 	case 200, 201, 202, 203, 204, 205, 206:
 		return true
 	default:
@@ -57,9 +103,8 @@ func isGood(status string) bool {
 
 // TODO: Investigate more sophsticated handling of these error codes ala
 // https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
-func isRetryable(status string) bool {
-	statusNum := httpStatus2number(status)
-	switch statusNum {
+func isRetryable(status int) bool {
+	switch status {
 	case 408:
 		// Request timeout
 		return true
@@ -158,38 +203,41 @@ func NewHttpClient(pooled bool) *retryablehttp.Client {
 	}
 }
 
-
 func dxHttpRequestCore(
 	ctx context.Context,
 	client *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) (body []byte, err error, status string) {
+	data []byte) ( []byte, error) {
 	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
 	if err != nil {
-		return nil, err, ""
+		return nil, err
 	}
 	req = req.WithContext(ctx)
 	for header, value := range headers {
 		req.Header.Set(header, value)
 	}
 	resp, err := client.Do(req)
-
 	if err != nil {
-		return nil, err, ""
+		return nil, err
 	}
-	status = resp.Status
-
-	body, _ = ioutil.ReadAll(resp.Body)
+	body, _ := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
+	statusCode, statusHumanReadable := parseStatus(resp.Status)
 
 	// If the status is not in the 200-299 range, an error occured.
-	if !(isGood(status)) {
-		return nil, nil, status
+	if !(isGood(statusCode)) {
+		httpError := HttpError{
+			Message : body,
+			StatusCode : statusCode,
+			StatusHumanReadable : statusHumanReadable,
+		}
+		return nil, &httpError
 	}
 
-	return body, nil, status
+	// good status
+	return body, nil
 }
 
 
@@ -198,52 +246,59 @@ func dxHttpRequestCore(
 func DxHttpRequest(
 	ctx context.Context,
 	client *retryablehttp.Client,
+	numRetries int,
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) (body []byte, err error) {
+	data []byte) ([]byte, error) {
 
-	var attemptTimeout int = attemptTimeoutInit
+	attemptTimeout := attemptTimeoutInit
 	var tCnt int
-	var status int
-	for tCnt = 0; tCnt < maxNumAttempts && attemptTimeout < attemptTimeoutMax; tCnt++ {
-		if tCnt > 0 {
-			// sleep before retrying
-			time.Sleep(time.Duration(attemptTimeout) * time.Second)
-			attemptTimeout *= 2
-		}
-
-		body, err, status := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
-		if err != nil {
-			log.Printf(err.Error())
-			return nil, err
-		}
-		if isGood(status) {
+	var err error
+	for tCnt = 0; tCnt < numRetries; tCnt++ {
+		body, err := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
+		if err == nil {
+			// http request went well, return the body
 			return body, nil
 		}
-		err = fmt.Errorf("%s request to '%s' failed with status %s",
-			requestType, url, status)
-		log.Printf(err.Error())
 
-		// check if this is a retryable error.
-		if !isRetryable(status) {
+		// triage the error
+		switch err.(type) {
+		case *HttpError:
+			hErr := err.(*HttpError)
+			if !isRetryable(hErr.StatusCode) {
+				// A non-retryable error, return the http error
+				return nil, hErr
+			}
+
+			// A retryable http error.
+			// sleep before retrying. Use bounded exponential backoff.
+			time.Sleep(time.Duration(attemptTimeout) * time.Second)
+			attemptTimeout = minInt(2 * attemptTimeout, attemptTimeoutMax)
+			continue
+
+		default:
+			// connection error/timeout error/library error. This is non retryable
+			log.Printf(err.Error())
 			return nil, err
 		}
 	}
 
-	err = fmt.Errorf("%s request to '%s' failed after %d attempts, status=%d",
-		requestType, url, tCnt, status)
+	log.Printf("%s request to '%s' failed after %d attempts, err=%s",
+		requestType, url, tCnt, err.Error())
 	return nil, err
 }
 
 
 // DxAPI - Function to wrap a generic API call to DNAnexus
+//
 func DxAPI(
 	ctx context.Context,
 	client *retryablehttp.Client,
+	numRetries int,
 	dxEnv *DXEnvironment,
 	api string,
-	payload string) (body []byte, err error) {
+	payload string) ([]byte, error) {
 	if (dxEnv.Token == "") {
 		err := errors.New("The token is not set. This may be because the environment isn't set.")
 		return nil, err
@@ -258,5 +313,39 @@ func DxAPI(
 		dxEnv.ApiServerHost,
 		dxEnv.ApiServerPort,
 		api)
-	return DxHttpRequest(ctx, client, "POST", url, headers, []byte(payload))
+
+	body, err := DxHttpRequest(ctx, client, numRetries, "POST", url, headers, []byte(payload))
+
+	if err != nil {
+		switch err.(type) {
+		case *HttpError:
+			// unmarshal the JSON response we got from dnanexus.
+			hErr := err.(*HttpError)
+
+			var dxErr DxError
+			if len(hErr.Message) < maxSizeResponse {
+				var dxErrJson DxErrorJson
+				if err := json.Unmarshal(hErr.Message, &dxErrJson); err != nil {
+					log.Printf("could not unmarshal JSON response (%s)", hErr.Message)
+				}
+				dxErr.EType = dxErrJson.E.EType
+				dxErr.Message = dxErrJson.E.Message
+			} else {
+				log.Printf("response is larger than maximum, %d > %d",
+					len(body), maxSizeResponse)
+			}
+
+			// the status can just be copied from the http error.
+			// It will be usable even if we can't parse the JSON response
+			dxErr.HttpCode = hErr.StatusCode
+			dxErr.HttpCodeHumanReadable = hErr.StatusHumanReadable
+			return nil, &dxErr
+		}
+
+		// non dnanexus error.
+		return nil, err
+	}
+
+	// good return case
+	return body, nil
 }

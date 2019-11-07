@@ -49,6 +49,7 @@ type State struct {
 const (
 	// An http request should never take more than 10 minutes.
 	requestOverallTimout = 10 * time.Minute
+	numRetries = 10
 )
 
 func check(e error) {
@@ -539,12 +540,17 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 			body, err := DxAPI(
 				context.TODO(),
 				httpClient,
+				numRetries,
 				&st.dxEnv,
 				fmt.Sprintf("%s/download", j.part.FileID),
 				payload)
 			check(err)
+
 			var u DXDownloadURL
-			json.Unmarshal(body, &u)
+			if err := json.Unmarshal(body, &u); err != nil {
+				log.Printf(err.Error())
+				panic("Could not unmarshal response from dnanexus for download URL")
+			}
 
 			st.mutex.Lock()
 			j.urls[j.part.FileID] = u
@@ -718,10 +724,6 @@ func (st *State) downloadDBPart(
 	wg *sync.WaitGroup,
 	urls map[string]DXDownloadURL) error {
 
-	timer := time.AfterFunc(10*time.Minute, func() {
-		panic("Timeout for downloading part exceeded.")
-	})
-	defer timer.Stop()
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
 	check(err)
@@ -779,7 +781,7 @@ func dxHttpRequestChecksum(
 	defer timer.Stop()
 
 	for tCnt < 3 {
-		body, err := DxHttpRequest(ctx, httpClient, requestType, url, headers, data)
+		body, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
 		if err != nil {
 			return nil, err
 		}
