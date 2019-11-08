@@ -103,7 +103,7 @@ func isGood(status int) bool {
 
 // TODO: Investigate more sophsticated handling of these error codes ala
 // https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
-func isRetryable(status int) bool {
+func isRetryable(requestType string, status int) bool {
 	switch status {
 	case 408:
 		// Request timeout
@@ -133,12 +133,20 @@ func isRetryable(status int) bool {
 	case 504:
 		// Gateway timeout
 		return true
-
-	default:
-		return false
 	}
-}
 
+	if requestType == "PUT" {
+		// We are uploading data.
+		switch status {
+		case 400:
+			// The server has closed the connection prematurely.
+			// On AWS, this can happen if an upload takes more than 20 seconds.
+			return true
+		}
+	}
+
+	return false
+}
 
 // These clients are intended for reuse in the same host. Throwing them
 // away will gradually leak file descriptors.
@@ -256,6 +264,12 @@ func DxHttpRequest(
 	var tCnt int
 	var err error
 	for tCnt = 0; tCnt < numRetries; tCnt++ {
+		if (tCnt > 0) {
+			// sleep before retrying. Use bounded exponential backoff.
+			time.Sleep(time.Duration(attemptTimeout) * time.Second)
+			attemptTimeout = minInt(2 * attemptTimeout, attemptTimeoutMax)
+		}
+
 		body, err := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
 		if err == nil {
 			// http request went well, return the body
@@ -266,17 +280,12 @@ func DxHttpRequest(
 		switch err.(type) {
 		case *HttpError:
 			hErr := err.(*HttpError)
-			if !isRetryable(hErr.StatusCode) {
+			if !isRetryable(requestType, hErr.StatusCode) {
 				// A non-retryable error, return the http error
 				return nil, hErr
 			}
-
 			// A retryable http error.
-			// sleep before retrying. Use bounded exponential backoff.
-			time.Sleep(time.Duration(attemptTimeout) * time.Second)
-			attemptTimeout = minInt(2 * attemptTimeout, attemptTimeoutMax)
 			continue
-
 		default:
 			// connection error/timeout error/library error. This is non retryable
 			log.Printf(err.Error())
