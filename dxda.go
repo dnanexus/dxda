@@ -30,11 +30,11 @@ import (
 // A subset of the configuration parameters that the dx-toolkit uses.
 //
 type DXEnvironment struct {
-	ApiServerHost      string
-	ApiServerPort      int
-	ApiServerProtocol  string
-	Token              string
-	DxJobId            string
+	ApiServerHost      string `json:"apiServerHost"`
+	ApiServerPort      int    `json:"apiServerPort"`
+	ApiServerProtocol  string `json:"apiServerProtocol"`
+	Token              string `json:"token"`
+	DxJobId            string `json:"dxJobId"`
 }
 
 type State struct {
