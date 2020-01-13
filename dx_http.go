@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -211,6 +212,54 @@ func NewHttpClient(pooled bool) *retryablehttp.Client {
 	}
 }
 
+// Bypass the retryablehttp library, it is causing an error.
+//
+// The error happens when doing an http PUT for a zero sized byte array.
+// The library somehow mangles the aws signature key, causing AWS to
+// reject the request with a 403 Forbidden code.
+func dxHttpRequestCoreBypass(
+	ctx context.Context,
+	client *retryablehttp.Client,
+	requestType string,
+	url string,
+	headers map[string]string,
+	data []byte) ( []byte, error) {
+	var dataReader io.Reader
+	if data != nil {
+		dataReader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(requestType, url, dataReader)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	//log.Printf("dxHttpRequestCoreBypass req=%v", req)
+
+	resp, err := client.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	body, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	statusCode, statusHumanReadable := parseStatus(resp.Status)
+
+	// If the status is not in the 200-299 range, an error occured.
+	if !(isGood(statusCode)) {
+		httpError := HttpError{
+			Message : body,
+			StatusCode : statusCode,
+			StatusHumanReadable : statusHumanReadable,
+		}
+		return nil, &httpError
+	}
+
+	// good status
+	return body, nil
+}
+
+
 func dxHttpRequestCore(
 	ctx context.Context,
 	client *retryablehttp.Client,
@@ -218,15 +267,16 @@ func dxHttpRequestCore(
 	url string,
 	headers map[string]string,
 	data []byte) ( []byte, error) {
-	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
+	req, err := retryablehttp.NewRequest(requestType, url, data)
 	if err != nil {
 		return nil, err
 	}
 	req = req.WithContext(ctx)
-	for header, value := range headers {
-		req.Header.Set(header, value)
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	resp, err := client.Do(req)
+
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +320,14 @@ func DxHttpRequest(
 			attemptTimeout = minInt(2 * attemptTimeout, attemptTimeoutMax)
 		}
 
-		body, err := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
+		var body []byte
+		var err error
+		if requestType == "PUT" && (data == nil || len(data) == 0) {
+			// circumvent an error in the retryablehttp library
+			body, err = dxHttpRequestCoreBypass(ctx, client, requestType, url, headers, data)
+		} else {
+			body, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
+		}
 		if err == nil {
 			// http request went well, return the body
 			return body, nil
