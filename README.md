@@ -30,7 +30,7 @@ To get started with `dx-download-agent`, download the the latest pre-compiled bi
 }
 ```
 
-To start a download process, first [generate a DNAnexus API token](https://wiki.dnanexus.com/Command-Line-Client/Login-and-Lgout#Authentication-Tokens) that is valid for a time period that you plan on downloading the files.  Store it in the following environment variable:
+To start a download process, first [generate a DNAnexus API token](https://documentation.dnanexus.com/user/login-and-logout#generating-an-authentication-token) that is valid for a time period that you plan on downloading the files.  Store it in the following environment variable:
 
 ```bash
 export DX_API_TOKEN=<INSERT API TOKEN HERE>
