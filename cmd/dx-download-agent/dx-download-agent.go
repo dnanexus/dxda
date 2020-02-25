@@ -58,13 +58,13 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 
+	st := dxda.NewDxDa(dxEnv, fname, opts)
+	defer st.Close()
+
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
-		dxda.CreateManifestDB(fname)
+		st.CreateManifestDB(fname)
 	}
-
-	st := dxda.Init(dxEnv, fname, opts)
-	defer st.Close()
 
 	if err := st.CheckDiskSpace(); err != nil {
 		fmt.Println(err)

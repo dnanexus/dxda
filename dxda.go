@@ -190,27 +190,8 @@ func Min(x, y int) int {
 	return y
 }
 
-// TODO: ValidateManifest(manifest) + Tests
-
-// Manifest - core type of manifest file
-type Manifest map[string][]DXFile
-
-// DXFile ...
-type DXFile struct {
-	Folder string            `json:"folder"`
-	ID     string            `json:"id"`
-	Name   string            `json:"name"`
-	Parts  map[string]DXPart `json:"parts"`
-}
-
-// DXPart ...
-type DXPart struct {
-	MD5  string `json:"md5"`
-	Size int    `json:"size"`
-}
-
 // Initialize the state
-func Init(dxEnv DXEnvironment, fname string, opts Opts) *State {
+func NewDxDa(dxEnv DXEnvironment, fname string, opts Opts) *State {
 	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
@@ -244,18 +225,6 @@ func (st *State) queryDBIntegerResult(query string) int {
 	rows.Close()
 
 	return cnt
-}
-
-// read the manifest from a file into a memory structure
-func readManifest(fname string) Manifest {
-	bzdata, err := ioutil.ReadFile(fname)
-	check(err)
-	br := bzip2.NewReader(bytes.NewReader(bzdata))
-	data, err := ioutil.ReadAll(br)
-	check(err)
-	var m Manifest
-	json.Unmarshal(data, &m)
-	return m
 }
 
 // DiskSpaceString ...
@@ -332,11 +301,11 @@ func md5str(body []byte) string {
 
 // DBPart ...
 type DBPart struct {
-	FileID           string
+	FileId           string
 	Project          string
 	FileName         string
 	Folder           string
-	PartID           int
+	PartId           int
 	MD5              string
 	Size             int
 	BlockSize        int
@@ -344,9 +313,12 @@ type DBPart struct {
 	DownloadDoneTime int64 // The time when it completed downloading
 }
 
-// CreateManifestDB ...
-func CreateManifestDB(fname string) {
-	m := readManifest(fname)
+// Read the manifest file, and build a database with an empty state
+// for each part in each file.
+func (st *State) CreateManifestDB(fname string) {
+	// read the manifest from disk
+	m := ReadManifest(fname, dxEnv)
+
 	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	os.Remove(statsFname)
 	db, err := sql.Open("sqlite3", statsFname)
@@ -374,12 +346,12 @@ func CreateManifestDB(fname string) {
 	check(err)
 	for proj, files := range m {
 		for _, f := range files {
-			for pID := range f.Parts {
+			for pId := range f.Parts {
 				sqlStmt = fmt.Sprintf(`
 				INSERT INTO manifest_stats
 				VALUES ('%s', '%s', '%s', '%s', %s, '%s', '%d', '%d', '%d', '%d');
 				`,
-					f.ID, proj, f.Name, f.Folder, pID, f.Parts[pID].MD5, f.Parts[pID].Size, f.Parts["1"].Size, 0, 0)
+					f.Id, proj, f.Name, f.Folder, pId, f.Parts[pId].MD5, f.Parts[pId].Size, f.Parts["1"].Size, 0, 0)
 				_, err = txn.Exec(sqlStmt)
 				check(err)
 			}
@@ -480,7 +452,7 @@ func (st *State) calcBandwidth(timeWindowNanoSec int64) float64 {
 // DownloadProgressOneTime ...
 // Report on progress so far
 func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
-	// query the current progrAddess
+	// query the current progress
 	st.ds.NumBytesComplete = st.queryDBIntegerResult(
 		"SELECT SUM(bytes_fetched) FROM manifest_stats WHERE bytes_fetched = size")
 	st.ds.NumPartsComplete = st.queryDBIntegerResult(
@@ -529,20 +501,19 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 
 	for j := range jobs {
 		st.mutex.Lock()
-		_, ok := j.urls[j.part.FileID]
+		_, ok := j.urls[j.part.FileId]
 		st.mutex.Unlock()
 
 		if !ok {
 			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 				j.part.Project, secondsInYear)
 
-			// TODO: 100 retries
 			body, err := DxAPI(
 				context.TODO(),
 				httpClient,
 				numRetries,
 				&st.dxEnv,
-				fmt.Sprintf("%s/download", j.part.FileID),
+				fmt.Sprintf("%s/download", j.part.FileId),
 				payload)
 			check(err)
 
@@ -553,11 +524,10 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 			}
 
 			st.mutex.Lock()
-			j.urls[j.part.FileID] = u
+			j.urls[j.part.FileId] = u
 			st.mutex.Unlock()
 		}
 
-		// TODO: 25 retries
 		st.downloadDBPart(httpClient, j.part, j.wg, j.urls)
 	}
 	wg.Done()
@@ -571,10 +541,10 @@ func (st *State) fileIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.WaitG
 			// running on a console, erase the previous line
 			// TODO: Get rid of this temporary space-padding fix for carriage returns
 			fmt.Printf("                                                                      \r")
-			fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartID)
+			fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartId)
 		} else {
 			// We are on a dx-job, and we want to see the history of printouts
-			fmt.Printf("%s:%d\n", j.part.FileName, j.part.PartID)
+			fmt.Printf("%s:%d\n", j.part.FileName, j.part.PartId)
 		}
 	}
 	wg.Done()
@@ -607,7 +577,7 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
-		err = rows.Scan(&p.FileID, &p.Project, &p.FileName, &p.Folder, &p.PartID, &p.MD5, &p.Size,
+		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.MD5, &p.Size,
 			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
@@ -649,7 +619,7 @@ func (st *State) CheckFileIntegrity() {
 
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
-		err = rows.Scan(&p.FileID, &p.Project, &p.FileName, &p.Folder, &p.PartID, &p.MD5, &p.Size,
+		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.MD5, &p.Size,
 			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
@@ -682,7 +652,7 @@ func (st *State) updateDBPart(p DBPart) {
 	now := time.Now().UnixNano()
 	_, err = tx.Exec(fmt.Sprintf(
 		"UPDATE manifest_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
-		p.Size, now, p.FileID, p.PartID))
+		p.Size, now, p.FileId, p.PartId))
 	check(err)
 
 }
@@ -698,7 +668,7 @@ func (st *State) resetDBPart(p DBPart) {
 
 	_, err = tx.Exec(fmt.Sprintf(
 		"UPDATE manifest_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s' AND part_id = '%d'",
-		p.FileID, p.PartID))
+		p.FileId, p.PartId))
 	check(err)
 }
 
@@ -713,7 +683,7 @@ func (st *State) resetDBFile(p DBPart) {
 
 	_, err = tx.Exec(fmt.Sprintf(
 		"UPDATE manifest_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
-		p.FileID))
+		p.FileId))
 	check(err)
 }
 
@@ -728,11 +698,11 @@ func (st *State) downloadDBPart(
 	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
 	check(err)
 	headers := make(map[string]string)
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartID-1)*p.BlockSize, p.PartID*p.BlockSize-1)
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", (p.PartId-1)*p.BlockSize, p.PartId*p.BlockSize-1)
 
 	// TODO: Avoid locking here?
 	st.mutex.Lock()
-	u := urls[p.FileID]
+	u := urls[p.FileId]
 	st.mutex.Unlock()
 
 	for k, v := range u.Headers {
@@ -740,7 +710,7 @@ func (st *State) downloadDBPart(
 	}
 	body, err := dxHttpRequestChecksum(httpClient, "GET", u.URL, headers, []byte("{}"), &p)
 	check(err)
-	_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
+	_, err = localf.Seek(int64((p.PartId-1)*p.BlockSize), 0)
 	check(err)
 	_, err = localf.Write(body)
 	check(err)
@@ -802,7 +772,7 @@ func dxHttpRequestChecksum(
 		}
 
 		// bad checksum, we need to retry
-		log.Printf("MD5 string of part ID %d does not match stored MD5sum. Retrying.", p.PartID)
+		log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", p.PartId)
 		tCnt++
 	}
 
@@ -821,7 +791,7 @@ func (st *State) checkDBPart(p DBPart, wg *sync.WaitGroup) {
 	} else {
 		localf, err := os.Open(fname)
 		check(err)
-		_, err = localf.Seek(int64((p.PartID-1)*p.BlockSize), 0)
+		_, err = localf.Seek(int64((p.PartId-1)*p.BlockSize), 0)
 		check(err)
 		body := make([]byte, p.Size)
 		_, err = localf.Read(body)
@@ -829,7 +799,7 @@ func (st *State) checkDBPart(p DBPart, wg *sync.WaitGroup) {
 		localf.Close()
 
 		if md5str(body) != p.MD5 {
-			fmt.Printf("Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.\n", p.FileName, p.PartID)
+			fmt.Printf("Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.\n", p.FileName, p.PartId)
 			st.resetDBPart(p)
 		}
 	}
