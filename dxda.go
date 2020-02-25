@@ -49,6 +49,7 @@ const (
 	// An http request should never take more than 10 minutes.
 	requestOverallTimout = 10 * time.Minute
 	numRetries = 10
+	secondsInYear int = 60 * 60 * 24 * 365
 )
 
 func urlFailure(requestType string, url string, status string) {
@@ -303,6 +304,7 @@ type DBPart struct {
 	Size             int
 	BlockSize        int
 	BytesFetched     int
+	Symlink          string
 	DownloadDoneTime int64 // The time when it completed downloading
 }
 
@@ -326,6 +328,7 @@ func (st *State) CreateManifestDB(fname string) {
 		size integer,
 		block_size integer,
 		bytes_fetched integer,
+                symlink string,
                 download_done_time integer
 	);
 	`
@@ -339,9 +342,9 @@ func (st *State) CreateManifestDB(fname string) {
 			for pId := range f.Parts {
 				sqlStmt = fmt.Sprintf(`
 				INSERT INTO manifest_stats
-				VALUES ('%s', '%s', '%s', '%s', %s, '%s', '%d', '%d', '%d', '%d');
+				VALUES ('%s', '%s', '%s', '%s', %s, '%s', '%d', '%d', '%d', '%s', '%d');
 				`,
-					f.Id, proj, f.Name, f.Folder, pId, f.Parts[pId].MD5, f.Parts[pId].Size, f.Parts["1"].Size, 0, 0)
+					f.Id, proj, f.Name, f.Folder, pId, f.Parts[pId].MD5, f.Parts[pId].Size, f.Parts["1"].Size, 0, f.Symlink, 0)
 				_, err = txn.Exec(sqlStmt)
 				check(err)
 			}
@@ -351,12 +354,10 @@ func (st *State) CreateManifestDB(fname string) {
 	check(err)
 }
 
-// PrepareFilesForDownload ...
-// TODO: Optimize this for only files that need to be downloaded
+// create an empty file for each download path.
 //
-// OQ: The 'urls' map is empty
-func (st *State) prepareFilesForDownload(m Manifest) map[string]DXDownloadURL {
-	urls := make(map[string]DXDownloadURL)
+// TODO: Optimize this for only files that need to be downloaded
+func (st *State) prepareFilesForDownload(m Manifest) {
 	for _, files := range m {
 		for _, f := range files {
 
@@ -372,7 +373,6 @@ func (st *State) prepareFilesForDownload(m Manifest) map[string]DXDownloadURL {
 			}
 		}
 	}
-	return urls
 }
 
 // JobInfo ...
@@ -483,11 +483,42 @@ func (st *State) downloadProgressContinuous() {
 	}
 }
 
+
+func (st *State) createURL(job JobInfo, httpClient *retryablehttp.Client) DXDownloadURL {
+	if (job.part.Symlink != "") {
+		// This is a symbolic link, which is just a plain URL
+		// to somewhere in the web.
+		return DXDownloadURL{
+			URL : job.part.Symlink,
+			Headers : nil,
+		}
+	}
+
+	// a regular DNAx file. Requires generating a pre-authenticated download URL.
+	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
+		job.part.Project, secondsInYear)
+
+	body, err := DxAPI(
+		context.TODO(),
+		httpClient,
+		numRetries,
+		&st.dxEnv,
+		fmt.Sprintf("%s/download", job.part.FileId),
+		payload)
+	check(err)
+
+	var u DXDownloadURL
+	if err := json.Unmarshal(body, &u); err != nil {
+		log.Printf(err.Error())
+		panic("Could not unmarshal response from dnanexus for download URL")
+	}
+	return u
+}
+
 func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 	// Create one http client per worker. This should, hopefully, allow
 	// caching open TCP/HTTP connections, reducing startup times.
 	httpClient := NewHttpClient(true)
-	const secondsInYear int = 60 * 60 * 24 * 365
 
 	for j := range jobs {
 		st.mutex.Lock()
@@ -495,23 +526,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 		st.mutex.Unlock()
 
 		if !ok {
-			payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-				j.part.Project, secondsInYear)
-
-			body, err := DxAPI(
-				context.TODO(),
-				httpClient,
-				numRetries,
-				&st.dxEnv,
-				fmt.Sprintf("%s/download", j.part.FileId),
-				payload)
-			check(err)
-
-			var u DXDownloadURL
-			if err := json.Unmarshal(body, &u); err != nil {
-				log.Printf(err.Error())
-				panic("Could not unmarshal response from dnanexus for download URL")
-			}
+			u := st.createURL(j, httpClient)
 
 			st.mutex.Lock()
 			j.urls[j.part.FileId] = u
@@ -546,7 +561,7 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	// TODO Log network settings and other helpful info for debugging
 	PrintLogAndOut("Preparing files for download\n")
-	urls := st.prepareFilesForDownload(*st.manifest)
+	st.prepareFilesForDownload(*st.manifest)
 
 	// Limit the number of threads
 	runtime.GOMAXPROCS(st.opts.NumThreads)
@@ -565,12 +580,12 @@ func (st *State) DownloadManifestDB(fname string) {
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.MD5, &p.Size,
-			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
+			&p.BlockSize, &p.BytesFetched, &p.Symlink, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
 		j.part = p
 		j.wg = &wg
-		j.urls = urls
+		j.urls = make(map[string]DXDownloadURL)
 		j.tmpid = i
 		jobs <- j
 	}
@@ -607,7 +622,7 @@ func (st *State) CheckFileIntegrity() {
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.MD5, &p.Size,
-			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
+			&p.BlockSize, &p.BytesFetched, &p.Symlink, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
 		j.part = p
@@ -749,6 +764,11 @@ func dxHttpRequestChecksum(
 			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, p.Size)
 			tCnt++
 			continue
+		}
+
+		if p.Symlink != "" {
+			// symbolic links have no part checksums.
+			return body, nil
 		}
 
 		// Verify the checksum.

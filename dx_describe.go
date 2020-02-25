@@ -21,7 +21,7 @@ type DxDescribeDataObject struct {
 	ArchivalState  string
 	Folder         string
 	Size           int64
-	SymlinkPath    string
+	Symlink        string   // the empty string for regular files, a full URL for symbolic links
 	Parts          map[string]DXPart
 }
 
@@ -58,7 +58,7 @@ type DxDescribeRaw struct {
 	ArchivalState    string `json:"archivalState"`
 	Size             int64 `json:"size"`
 	Parts            map[string]DXPart `json:"parts"`
-	SymlinkPath     *DxSymLink `json:"symlinkPath,omitempty"`
+	Symlink         *DxSymLink `json:"symlinkPath,omitempty"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -111,8 +111,8 @@ func submit(
 		descRaw := descRawTop.Describe
 
 		symlinkUrl := ""
-		if descRaw.SymlinkPath != nil {
-			symlinkUrl = descRaw.SymlinkPath.Url
+		if descRaw.Symlink != nil {
+			symlinkUrl = descRaw.Symlink.Url
 		}
 
 		desc := DxDescribeDataObject{
@@ -123,7 +123,7 @@ func submit(
 			ArchivalState : descRaw.ArchivalState,
 			Size : descRaw.Size,
 			Parts : descRaw.Parts,
-			SymlinkPath : symlinkUrl,
+			Symlink : symlinkUrl,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc

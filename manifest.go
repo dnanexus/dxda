@@ -25,9 +25,8 @@ type DXFile struct {
 	// optional parts that will get filled in by calling DNAx,
 	// if they are not provided in the manifest file.
 	Parts         map[string]DXPart `json:"parts,omitempty"`
-	State         string            `json:"state,omitempty"`
-	ArchivalState string            `json:"archivalState,omitempty"`
 	Size          int64             `json:"size,omitempty"`
+	Symlink   string
 }
 
 func validateDirName(p string) error {
@@ -87,25 +86,15 @@ func (m *Manifest) cleanPaths() {
 func (m *Manifest) fillInMissingFields(ctx context.Context, dxEnv *DXEnvironment) error {
 	tmpHttpClient := NewHttpClient(false)
 
-	// Make a list of all the files that are missing details
+	// Make a list of all the file-ids
 	var fileIds []string
 	for _, files := range *m {
 		for _, f := range files {
-			if f.Size == 0 {
-				// the file is empty, we will be able
-				// to create it without performing any DNAx reads.
-				continue
-			}
-			// we now know that the file has at least one part
-			if len(f.Parts) == 0 ||
-				f.State == "" ||
-				f.ArchivalState == "" {
-				fileIds = append(fileIds, f.Id)
-			}
+			fileIds = append(fileIds, f.Id)
 		}
 	}
 
-	// describe all the files with missing elements
+	// describe all the files
 	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, dxEnv, fileIds)
 	if err != nil {
 		return err
@@ -130,10 +119,9 @@ func (m *Manifest) fillInMissingFields(ctx context.Context, dxEnv *DXEnvironment
 			}
 
 			// This file was missing details
-			f.State = fDesc.State
-			f.ArchivalState = fDesc.ArchivalState
-			f.Size = fDesc.Size
 			f.Parts = fDesc.Parts
+			f.Size = fDesc.Size
+			f.Symlink = fDesc.Symlink
 		}
 	}
 
@@ -158,7 +146,9 @@ func ReadManifest(fname string, dxEnv *DXEnvironment) (*Manifest, error) {
 	m.cleanPaths()
 
 	ctx := context.TODO()
-	m.fillInMissingFields(ctx, dxEnv)
+	if err := m.fillInMissingFields(ctx, dxEnv); err != nil {
+		return nil, err
+	}
 
 	return m, nil
 }
