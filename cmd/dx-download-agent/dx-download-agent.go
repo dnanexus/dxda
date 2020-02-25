@@ -60,6 +60,7 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
+	st.ReadManifest(fname)
 
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
@@ -107,7 +108,7 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 
-	st := dxda.Init(dxEnv, fname, opts)
+	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
 
 	st.InitDownloadStatus()
@@ -149,7 +150,7 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 
-	st := dxda.Init(dxEnv, fname, opts)
+	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
 
 	st.CheckFileIntegrity()

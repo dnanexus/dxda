@@ -84,13 +84,6 @@ func parseStatus(status string) (int, string) {
 	return num, rest
 }
 
-func minInt(x, y int) int {
-	if x < y {
-		return x
-	}
-	return y
-}
-
 // Good status is in the range 2xx
 func isGood(status int) bool {
 	switch status {
@@ -317,7 +310,7 @@ func DxHttpRequest(
 		if (tCnt > 0) {
 			// sleep before retrying. Use bounded exponential backoff.
 			time.Sleep(time.Duration(attemptTimeout) * time.Second)
-			attemptTimeout = minInt(2 * attemptTimeout, attemptTimeoutMax)
+			attemptTimeout = Min(2 * attemptTimeout, attemptTimeoutMax)
 		}
 
 		var body []byte

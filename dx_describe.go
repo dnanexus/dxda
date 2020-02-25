@@ -3,8 +3,6 @@ package dxda
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 
 	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )

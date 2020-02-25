@@ -4,8 +4,6 @@ package dxda
 
 // TODO: Some more code cleanup + consistency with best Go practices, add more unit tests, setup deeper integration tests, add build notes
 import (
-	"bytes"
-	"compress/bzip2"
 	"context"
 	"crypto/md5"
 	"database/sql"
@@ -43,6 +41,7 @@ type State struct {
 	mutex           *sync.Mutex
 	db              *sql.DB
 	ds              *DownloadStatus
+	manifest        *Manifest
 	timeOfLastError  int
 }
 
@@ -51,12 +50,6 @@ const (
 	requestOverallTimout = 10 * time.Minute
 	numRetries = 10
 )
-
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
 
 func urlFailure(requestType string, url string, status string) {
 	fmt.Println("ERROR when attempting API call.  Please see <manifest-file-name>.download.log for more details.")
@@ -181,15 +174,6 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 	return crntDxEnv, obtainedBy, err
 }
 
-// Min ...
-// https://mrekucci.blogspot.com/2015/07/dont-abuse-mathmax-mathmin.html
-func Min(x, y int) int {
-	if x < y {
-		return x
-	}
-	return y
-}
-
 // Initialize the state
 func NewDxDa(dxEnv DXEnvironment, fname string, opts Opts) *State {
 	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
@@ -203,8 +187,17 @@ func NewDxDa(dxEnv DXEnvironment, fname string, opts Opts) *State {
 		mutex : &sync.Mutex{},
 		db : db,
 		ds : nil,
+		manifest : nil,
 		timeOfLastError : 0,
 	}
+}
+
+// read the manifest from disk, and fill in missing
+// details.
+func (st *State) ReadManifest(fname string) {
+	manifest, err := ReadManifest(fname, &st.dxEnv)
+	check(err)
+	st.manifest = manifest
 }
 
 func (st *State) Close() {
@@ -316,9 +309,6 @@ type DBPart struct {
 // Read the manifest file, and build a database with an empty state
 // for each part in each file.
 func (st *State) CreateManifestDB(fname string) {
-	// read the manifest from disk
-	m := ReadManifest(fname, dxEnv)
-
 	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	os.Remove(statsFname)
 	db, err := sql.Open("sqlite3", statsFname)
@@ -344,7 +334,7 @@ func (st *State) CreateManifestDB(fname string) {
 
 	txn, err := db.Begin()
 	check(err)
-	for proj, files := range m {
+	for proj, files := range *st.manifest {
 		for _, f := range files {
 			for pId := range f.Parts {
 				sqlStmt = fmt.Sprintf(`
@@ -553,13 +543,10 @@ func (st *State) fileIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.WaitG
 // Download all the files that are mentioned in the manifest.
 func (st *State) DownloadManifestDB(fname string) {
 	st.timeOfLastError = time.Now().Second()
-	// TODO: Update to not require manifest structure read into memory
-	m := readManifest(fname)
 
 	// TODO Log network settings and other helpful info for debugging
-
 	PrintLogAndOut("Preparing files for download\n")
-	urls := st.prepareFilesForDownload(m)
+	urls := st.prepareFilesForDownload(*st.manifest)
 
 	// Limit the number of threads
 	runtime.GOMAXPROCS(st.opts.NumThreads)
