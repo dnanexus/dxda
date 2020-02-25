@@ -11,22 +11,51 @@ import (
 	"strings"
 )
 
+//----------------------------------------------------------------------------------
+// External facing types
 
-// Manifest - core type of manifest file
-type Manifest map[string][]*DXFile
+// Manifest.
+//  1) a map from file-id to a description of a regular file
+//  2) a map from file-id to a description of a symbolic link
+type Manifest struct {
+	Files     []DXFile
+	Symlinks  []DXSymlinkFile
+}
 
 // DXFile ...
 type DXFile struct {
-	// compulsory fields
+	Folder        string
+	Id            string
+	ProjId        string
+	Name          string
+	Size          int64
+	Parts         map[string]DXPart
+}
+
+type DXSymlinkFile struct {
+	Folder        string
+	Id            string
+	ProjId        string
+	Name          string
+	Size          int64
+	Url           string
+	MD5           string
+}
+
+//----------------------------------------------------------------------------------
+
+// Raw manifest. A list provided by the user of projects and files within them
+// that need to be downloaded.
+//
+// The representation is a mapping from project-id to a list of files
+type ManifestRaw map[string][]ManifestRawFile
+
+// File description in the manifest. Additional details will be gathered
+// with an API call.
+type ManifestRawFile struct {
 	Folder        string            `json:"folder"`
 	Id            string            `json:"id"`
 	Name          string            `json:"name"`
-
-	// optional parts that will get filled in by calling DNAx,
-	// if they are not provided in the manifest file.
-	Parts         map[string]DXPart `json:"parts,omitempty"`
-	Size          int64             `json:"size,omitempty"`
-	Symlink   string
 }
 
 func validateDirName(p string) error {
@@ -52,8 +81,8 @@ func validProject(pId string) bool {
 	return false
 }
 
-func (m *Manifest) validate() error {
-	for projId, files := range *m {
+func validate(mRaw ManifestRaw) error {
+	for projId, files := range mRaw {
 		if !validProject(projId) {
 			return fmt.Errorf("project has invalid Id %s", projId)
 		}
@@ -71,24 +100,14 @@ func (m *Manifest) validate() error {
 }
 
 
-// Get rid of spurious slashes. For example, replace "//" with "/".
-func (m *Manifest) cleanPaths() {
-	for _, files := range *m {
-		for i, _ := range files {
-			f := files[i]
-			f.Folder = filepath.Clean(f.Folder)
-		}
-	}
-}
-
-// fill in missing fields for each file.
+// Fill in missing fields for each file. Split into symlinks, and regular files.
 //
-func (m *Manifest) fillInMissingFields(ctx context.Context, dxEnv *DXEnvironment) error {
+func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw manifestRaw) (Manifest, error) {
 	tmpHttpClient := NewHttpClient(false)
 
 	// Make a list of all the file-ids
 	var fileIds []string
-	for _, files := range *m {
+	for _, files := range m {
 		for _, f := range files {
 			fileIds = append(fileIds, f.Id)
 		}
@@ -100,55 +119,78 @@ func (m *Manifest) fillInMissingFields(ctx context.Context, dxEnv *DXEnvironment
 		return err
 	}
 
+	manifest := Manifest{
+		Files : make([]DXFile),
+		Symlinks : make([]DXSymlinkFile),
+	}
+
 	// fill in the missing information
-	for _, files := range *m {
-		for i,_ := range files {
-			f := files[i]
+	for projId, files := range mRaw {
+		for _, f := range files {
 			fDesc, ok := dataObjs[f.Id]
 			if !ok {
-				return fmt.Errorf("File %s was not described", fDesc.Id)
+				return fmt.Errorf("File %s was not described", f.Id)
 			}
-
 			if fDesc.State != "closed" {
 				return fmt.Errorf("File %s is not closed, it is %s",
-					fDesc.Id, fDesc.State)
+					f.Id, fDesc.State)
 			}
 			if fDesc.ArchivalState != "live" {
 				return fmt.Errorf("File %s is not live, it cannot be read (state=%s)",
-					fDesc.Id, fDesc.ArchivalState)
+					f.Id, fDesc.ArchivalState)
 			}
 
-			// This file was missing details
-			f.Parts = fDesc.Parts
-			f.Size = fDesc.Size
-			f.Symlink = fDesc.Symlink
+			// Get rid of spurious slashes. For example, replace "//" with "/".
+			folder := filepath.Clean(f.Folder)
+
+			if fDesc.symlink == nil {
+				// regular file
+				dxFile := DXFile{
+					Folder : folder,
+					Id : f.Id,
+					ProjId : projId,
+					Name : f.Name,
+					Size : fDesc.Size,
+					Parts : fDesc.Parts,
+				}
+				manifest.Files = append(manifest.Files, dxFile)
+			} else {
+				// symbolic link
+				dxSymlink := DXSymlinkFile{
+					Folder : folder,
+					Id : f.Id,
+					ProjId : projId,
+					Name : f.Name,
+					Size : fDesc.Size,
+					Url : fDesc.Symlink.Url,
+					MD5 : fDesc.Symlink.MD5,
+				}
+				manifest.Symlinks = append(manifest.Symlinks, dxSymlink)
+			}
 		}
 	}
 
-	return nil
+	return manifest
 }
 
 // read the manifest from a file into a memory structure
 func ReadManifest(fname string, dxEnv *DXEnvironment) (*Manifest, error) {
+	// read from disk, and open compression
 	bzdata, err := ioutil.ReadFile(fname)
 	check(err)
 	br := bzip2.NewReader(bytes.NewReader(bzdata))
 	data, err := ioutil.ReadAll(br)
 	check(err)
-	var mRaw Manifest
+
+	var mRaw ManifestRaw
 	if err := json.Unmarshal(data, &mRaw); err != nil {
 		return nil, err
 	}
-	m := &mRaw
-	if err := m.validate(); err != nil {
+
+	if err := validate(m); err != nil {
 		return nil, err
 	}
-	m.cleanPaths()
 
 	ctx := context.TODO()
-	if err := m.fillInMissingFields(ctx, dxEnv); err != nil {
-		return nil, err
-	}
-
-	return m, nil
+	return makeManifest(ctx, dxEnv, mRaw)
 }

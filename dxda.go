@@ -3,6 +3,11 @@ package dxda
 // Some inspiration + code snippets taken from https://github.com/dnanexus/precision-fda/blob/master/go/pfda.go
 
 // TODO: Some more code cleanup + consistency with best Go practices, add more unit tests, setup deeper integration tests, add build notes
+
+// Questions
+//  * Why are continuous reports commented out?
+//  * What is the difference between block_size and size?
+//
 import (
 	"context"
 	"crypto/md5"
@@ -25,16 +30,6 @@ import (
 	"github.com/hashicorp/go-retryablehttp" // http client library
 )
 
-// A subset of the configuration parameters that the dx-toolkit uses.
-//
-type DXEnvironment struct {
-	ApiServerHost      string `json:"apiServerHost"`
-	ApiServerPort      int    `json:"apiServerPort"`
-	ApiServerProtocol  string `json:"apiServerProtocol"`
-	Token              string `json:"token"`
-	DxJobId            string `json:"dxJobId"`
-}
-
 type State struct {
 	dxEnv            DXEnvironment
 	opts             Opts
@@ -52,11 +47,6 @@ const (
 	secondsInYear int = 60 * 60 * 24 * 365
 )
 
-func urlFailure(requestType string, url string, status string) {
-	fmt.Println("ERROR when attempting API call.  Please see <manifest-file-name>.download.log for more details.")
-	log.Fatalln(fmt.Errorf("%s request to '%s' failed with status %s", requestType, url, status))
-}
-
 // PrintLogAndOut ...
 func PrintLogAndOut(str string) {
 	fmt.Printf(str)
@@ -67,113 +57,6 @@ func PrintLogAndOut(str string) {
 // Utilities to interact with the DNAnexus API
 // TODO: Create automatic API wrappers for the dx toolkit
 // e.g. via: https://github.com/dnanexus/dx-toolkit/tree/master/src/api_wrappers
-
-// Opts ...
-type Opts struct {
-	NumThreads int // # of workers to process downloads
-}
-
-// DXConfig - Basic variables regarding DNAnexus environment config
-type DXConfig struct {
-	DXSECURITYCONTEXT    string `json:"DX_SECURITY_CONTEXT"`
-	DXAPISERVERHOST      string `json:"DX_APISERVER_HOST"`
-	DXPROJECTCONTEXTNAME string `json:"DX_PROJECT_CONTEXT_NAME"`
-	DXPROJECTCONTEXTID   string `json:"DX_PROJECT_CONTEXT_ID"`
-	DXAPISERVERPORT      string `json:"DX_APISERVER_PORT"`
-	DXUSERNAME           string `json:"DX_USERNAME"`
-	DXAPISERVERPROTOCOL  string `json:"DX_APISERVER_PROTOCOL"`
-	DXCLIWD              string `json:"DX_CLI_WD"`
-}
-
-// DXAuthorization - Basic variables regarding DNAnexus authorization
-type DXAuthorization struct {
-	AuthToken     string `json:"auth_token"`
-	AuthTokenType string `json:"auth_token_type"`
-}
-
-func safeString2Int(s string) (int) {
-	i, err := strconv.Atoi(s)
-	check(err)
-	return i
-}
-
-/*
-   Construct the environment structure. Return an additional string describing
-   the source of the security token.
-
-   The DXEnvironment has its fields set from the following sources, in order (with
-   later items overriding earlier items):
-
-   1. Hardcoded defaults
-   2. Environment variables of the format DX_*
-   3. Configuration file ~/.dnanexus_config/environment.json
-
-   If no token can be obtained from these methods, an empty environment is returned.
-   If the token was received from the 'DX_API_TOKEN' environment variable, the second variable in the pair
-   will be the string 'environment'. If it is obtained from a DNAnexus configuration file, the second variable
-   in the pair will be '.dnanexus_config/environment.json'.
-*/
-func GetDxEnvironment() (DXEnvironment, string, error) {
-	obtainedBy := ""
-
-	// start with hardcoded defaults
-	crntDxEnv := DXEnvironment{ "api.dnanexus.com", 443, "https", "", "" }
-
-	// override by environment variables, if they are set
-	apiServerHost := os.Getenv("DX_APISERVER_HOST")
-	if apiServerHost != "" {
-		crntDxEnv.ApiServerHost = apiServerHost
-	}
-	apiServerPort := os.Getenv("DX_APISERVER_PORT")
-	if apiServerPort != "" {
-		crntDxEnv.ApiServerPort = safeString2Int(apiServerPort)
-	}
-	apiServerProtocol := os.Getenv("DX_APISERVER_PROTOCOL")
-	if apiServerProtocol != "" {
-		crntDxEnv.ApiServerProtocol = apiServerProtocol
-	}
-	securityContext := os.Getenv("DX_SECURITY_CONTEXT")
-	if securityContext != "" {
-		// parse the JSON format security content
-		var dxauth DXAuthorization
-		json.Unmarshal([]byte(securityContext), &dxauth)
-		crntDxEnv.Token = dxauth.AuthToken
-		obtainedBy = "environment"
-	}
-	envToken := os.Getenv("DX_API_TOKEN")
-	if envToken != "" {
-		crntDxEnv.Token = envToken
-		obtainedBy = "environment"
-	}
-	dxJobId := os.Getenv("DX_JOB_ID")
-	if dxJobId != "" {
-		crntDxEnv.DxJobId = dxJobId
-	}
-
-	// Now try the configuration file
-	envFile := fmt.Sprintf("%s/.dnanexus_config/environment.json", os.Getenv("HOME"))
-	if _, err := os.Stat(envFile); err == nil {
-		config, _ := ioutil.ReadFile(envFile)
-		var dxconf DXConfig
-		json.Unmarshal(config, &dxconf)
-		var dxauth DXAuthorization
-		json.Unmarshal([]byte(dxconf.DXSECURITYCONTEXT), &dxauth)
-
-		crntDxEnv.ApiServerHost = dxconf.DXAPISERVERHOST
-		crntDxEnv.ApiServerPort = safeString2Int(dxconf.DXAPISERVERPORT)
-		crntDxEnv.ApiServerProtocol = dxconf.DXAPISERVERPROTOCOL
-		crntDxEnv.Token = dxauth.AuthToken
-
-		obtainedBy = "~/.dnanexus_config/environment.json"
-	}
-
-	// sanity checks
-	var err error = nil
-	if crntDxEnv.Token == "" {
-		err = errors.New("could not retrieve a security token")
-	}
-	return crntDxEnv, obtainedBy, err
-}
 
 // Initialize the state
 func NewDxDa(dxEnv DXEnvironment, fname string, opts Opts) *State {
@@ -300,11 +183,10 @@ type DBPart struct {
 	FileName         string
 	Folder           string
 	PartId           int
-	MD5              string
+	Offset           int64
 	Size             int
-	BlockSize        int
+	MD5              string
 	BytesFetched     int
-	Symlink          string
 	DownloadDoneTime int64 // The time when it completed downloading
 }
 
@@ -324,12 +206,29 @@ func (st *State) CreateManifestDB(fname string) {
 		name text,
 		folder text,
 		part_id integer,
-		md5 text,
+                offset integer,
 		size integer,
-		block_size integer,
+		md5 text,
 		bytes_fetched integer,
-                symlink string,
                 download_done_time integer
+	);
+	`
+	_, err = db.Exec(sqlStmt)
+	check(err)
+
+	// symbolic link parts do not have md5 checksums, and they
+	// can use the URL directly.
+	sqlStmt := `
+	CREATE TABLE manifest_symlink_stats (
+		file_id text,
+		project text,
+		name text,
+		folder text,
+                offset integer,
+		size integer,
+		bytes_fetched integer,
+                download_done_time integer,
+                url text
 	);
 	`
 	_, err = db.Exec(sqlStmt)
@@ -337,19 +236,21 @@ func (st *State) CreateManifestDB(fname string) {
 
 	txn, err := db.Begin()
 	check(err)
-	for proj, files := range *st.manifest {
-		for _, f := range files {
-			for pId := range f.Parts {
-				sqlStmt = fmt.Sprintf(`
+	for _, f := range st.manifest.Files {
+		// A regular file
+		offset := 0
+		for pId := range f.Parts {
+			sqlStmt = fmt.Sprintf(`
 				INSERT INTO manifest_stats
-				VALUES ('%s', '%s', '%s', '%s', %s, '%s', '%d', '%d', '%d', '%s', '%d');
+				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d');
 				`,
-					f.Id, proj, f.Name, f.Folder, pId, f.Parts[pId].MD5, f.Parts[pId].Size, f.Parts["1"].Size, 0, f.Symlink, 0)
-				_, err = txn.Exec(sqlStmt)
-				check(err)
-			}
+				f.Id, f.ProjId, f.Name, f.Folder, pId, offset, f.Parts[pId].Size, f.Parts[pId].MD5, 0, 0)
+			_, err = txn.Exec(sqlStmt)
+			check(err)
+			offset += f.Parts[pId].Size
 		}
 	}
+
 	err = txn.Commit()
 	check(err)
 }
@@ -485,14 +386,14 @@ func (st *State) downloadProgressContinuous() {
 
 
 func (st *State) createURL(job JobInfo, httpClient *retryablehttp.Client) DXDownloadURL {
-	if (job.part.Symlink != "") {
+/*	if (job.part.Symlink != "") {
 		// This is a symbolic link, which is just a plain URL
 		// to somewhere in the web.
 		return DXDownloadURL{
 			URL : job.part.Symlink,
 			Headers : nil,
 		}
-	}
+	}*/
 
 	// a regular DNAx file. Requires generating a pre-authenticated download URL.
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
@@ -580,7 +481,7 @@ func (st *State) DownloadManifestDB(fname string) {
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.MD5, &p.Size,
-			&p.BlockSize, &p.BytesFetched, &p.Symlink, &p.DownloadDoneTime)
+			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
 		j.part = p
@@ -622,7 +523,7 @@ func (st *State) CheckFileIntegrity() {
 	for i := 1; rows.Next(); i++ {
 		var p DBPart
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.MD5, &p.Size,
-			&p.BlockSize, &p.BytesFetched, &p.Symlink, &p.DownloadDoneTime)
+			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		var j JobInfo
 		j.part = p
@@ -642,7 +543,7 @@ func (st *State) CheckFileIntegrity() {
 	fmt.Println("Integrity check complete.")
 }
 
-// UpdateDBPart. Locking is done by the database.
+// UpdateDBPart.
 func (st *State) updateDBPart(p DBPart) {
 	st.mutex.Lock()
 	defer st.mutex.Unlock()
@@ -764,11 +665,6 @@ func dxHttpRequestChecksum(
 			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, p.Size)
 			tCnt++
 			continue
-		}
-
-		if p.Symlink != "" {
-			// symbolic links have no part checksums.
-			return body, nil
 		}
 
 		// Verify the checksum.

@@ -10,6 +10,7 @@ import (
 // Limit on the number of objects that the bulk-describe API can take
 const (
 	maxNumObjectsInDescribe = 1000
+	numRetriesDefault   = 3
 )
 
 // Description of a DNAx data object
@@ -21,8 +22,8 @@ type DxDescribeDataObject struct {
 	ArchivalState  string
 	Folder         string
 	Size           int64
-	Symlink        string   // the empty string for regular files, a full URL for symbolic links
-	Parts          map[string]DXPart
+	Parts          map[string]DXPart // a list of parts for a DNAx file
+	Symlink        *DXSymlink
 }
 
 // description of part of a file
@@ -31,6 +32,12 @@ type DXPart struct {
 	Size int    `json:"size"`
 }
 
+// a full URL for symbolic links, with a corresponding MD5 checksum for
+// the entire file.
+type DXSymlink {
+	Url string
+	MD5 string
+}
 
 
 type Request struct {
@@ -46,7 +53,7 @@ type DxDescribeRawTop struct {
 	Describe DxDescribeRaw `json:"describe"`
 }
 
-type DxSymLink struct {
+type DxSymlinkRaw struct {
 	Url string  `json:"object"`
 }
 
@@ -58,7 +65,8 @@ type DxDescribeRaw struct {
 	ArchivalState    string `json:"archivalState"`
 	Size             int64 `json:"size"`
 	Parts            map[string]DXPart `json:"parts"`
-	Symlink         *DxSymLink `json:"symlinkPath,omitempty"`
+	Symlink         *DxSymlinkRaw `json:"symlinkPath,omitempty"`
+	MD5             *string       `json:"md5,omitempty"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -79,9 +87,10 @@ func submit(
 				"state" : true,
 				"archivalState" : true,
 				"size" : true,
+				"parts" : true,
 				"symlinkPath" : true,
 				"drive" : true,
-				"parts" : true,
+				"md5" : true,
 			},
 		},
 	}
@@ -96,7 +105,7 @@ func submit(
 	}
 	//fmt.Printf("payload = %s", string(payload))
 
-	repJs, err := DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "system/describeDataObjects", string(payload))
+	repJs, err := DxAPI(ctx, httpClient, numRetriesDefault, dxEnv, "system/describeDataObjects", string(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -110,9 +119,14 @@ func submit(
 	for _, descRawTop := range(reply.Results) {
 		descRaw := descRawTop.Describe
 
-		symlinkUrl := ""
+		// If this is a symlink, create structure with
+		// all the relevant information.
+		var symlink DXSymlink = nil
 		if descRaw.Symlink != nil {
-			symlinkUrl = descRaw.Symlink.Url
+			symlink := {
+				MD5 : *descRaw.MD5,
+				url : descRaw.Symlink.Url,
+			}
 		}
 
 		desc := DxDescribeDataObject{
@@ -123,7 +137,7 @@ func submit(
 			ArchivalState : descRaw.ArchivalState,
 			Size : descRaw.Size,
 			Parts : descRaw.Parts,
-			Symlink : symlinkUrl,
+			Symlink : symlink,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc
