@@ -8,12 +8,17 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 )
 
 const (
 	KiB                   = 1024
 	MiB                   = 1024 * KiB
 	GiB                   = 1024 * MiB
+)
+const (
+	// An http request should never take more than 10 minutes.
+	requestOverallTimout = 10 * time.Minute
 )
 
 // Configuration options for the download agent
@@ -149,7 +154,7 @@ func MinInt64(x, y int64) int64 {
     return x
 }
 
-func safeString2Int(s string) (int) {
+func safeString2Int(s string) int {
 	i, err := strconv.Atoi(s)
 	check(err)
 	return i

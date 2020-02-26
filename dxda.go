@@ -30,8 +30,6 @@ import (
 )
 
 const (
-	// An http request should never take more than 10 minutes.
-	requestOverallTimout = 10 * time.Minute
 	numRetries = 10
 	secondsInYear int = 60 * 60 * 24 * 365
 
@@ -258,15 +256,15 @@ func (st *State) CheckDiskSpace() error {
 
 func (st *State) addRegularFileToTable(txn *sql.Tx, f DXFileRegular) {
 	offset := int64(0)
-	for pId := range f.Parts {
+	for _, p := range f.Parts {
 		sqlStmt := fmt.Sprintf(`
 				INSERT INTO manifest_regular_stats
 				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d');
 				`,
-			f.Id, f.ProjId, f.Name, f.Folder, pId, offset, f.Parts[pId].Size, f.Parts[pId].MD5, 0, 0)
+			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0)
 		_, err := txn.Exec(sqlStmt)
 		check(err)
-		offset += int64(f.Parts[pId].Size)
+		offset += int64(p.Size)
 	}
 }
 

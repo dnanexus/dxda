@@ -373,7 +373,14 @@ func DxAPI(
 		dxEnv.ApiServerPort,
 		api)
 
-	body, err := DxHttpRequest(ctx, client, numRetries, "POST", url, headers, []byte(payload))
+	// Safety procedure to force timeout to prevent hanging
+	ctx2, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(requestOverallTimout, func() {
+		cancel()
+	})
+	defer timer.Stop()
+
+	body, err := DxHttpRequest(ctx2, client, numRetries, "POST", url, headers, []byte(payload))
 
 	if err != nil {
 		switch err.(type) {

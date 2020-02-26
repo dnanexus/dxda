@@ -28,8 +28,12 @@ type DxDescribeDataObject struct {
 
 // description of part of a file
 type DXPart struct {
-	MD5  string `json:"md5"`
-	Size int    `json:"size"`
+	// we add the part-id in a post-processing step
+	Id     int
+
+	// these fields are in the input JSON
+	MD5    string `json:"md5"`
+	Size   int    `json:"size"`
 }
 
 // a full URL for symbolic links, with a corresponding MD5 checksum for

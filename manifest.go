@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -36,7 +37,7 @@ type DXFileRegular struct {
 	ProjId        string
 	Name          string
 	Size          int64
-	Parts         map[string]DXPart
+	Parts         []DXPart
 }
 
 func (reg DXFileRegular) id() string     { return reg.Id }
@@ -135,6 +136,25 @@ func (mRaw ManifestRaw) onlyRegularFilesWithParts() bool {
 	return true
 }
 
+// add ids to the parts, and sort by the part-id. They
+// are sorted in string lexicographically order, which is
+// not what we want.
+func processFileParts(orgParts map[string]DXPart) []DXPart {
+	var parts []DXPart
+	for partId, p := range orgParts {
+		p2 := DXPart{
+			MD5 :  p.MD5,
+			Size : p.Size,
+			Id :   safeString2Int(partId),
+		}
+		parts = append(parts, p2)
+	}
+
+	// sort by monotonically increasing Id
+	sort.Slice(parts, func(i, j int) bool { return parts[i].Id < parts[j].Id })
+
+	return parts
+}
 
 func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 	manifest := Manifest{
@@ -146,11 +166,12 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 		for _, f := range files {
 			// Get rid of spurious slashes. For example, replace "//" with "/".
 			folder := filepath.Clean(f.Folder)
+			parts := processFileParts(*f.Parts)
 
-			// calculate file size by summing the part sizes
+			// calculate file size by summing up the parts
 			size := int64(0)
-			for _, part := range *(f.Parts) {
-				size += int64(part.Size)
+			for _, p := range(parts) {
+				size += int64(p.Size)
 			}
 
 			// regular file
@@ -160,7 +181,7 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 				ProjId : projId,
 				Name : f.Name,
 				Size : size,
-				Parts : *f.Parts,
+				Parts : parts,
 			}
 			manifest.Files = append(manifest.Files, dxFile)
 		}
@@ -220,7 +241,7 @@ func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvi
 					ProjId : projId,
 					Name : f.Name,
 					Size : fDesc.Size,
-					Parts : fDesc.Parts,
+					Parts : processFileParts(fDesc.Parts),
 				}
 				manifest.Files = append(manifest.Files, dxFile)
 			} else {
