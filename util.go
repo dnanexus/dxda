@@ -1,5 +1,21 @@
 package dxda
 
+import (
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"strconv"
+)
+
+const (
+	KiB                   = 1024
+	MiB                   = 1024 * KiB
+	GiB                   = 1024 * MiB
+)
+
 // Configuration options for the download agent
 type Opts struct {
 	NumThreads int // # of workers to process downloads
@@ -119,15 +135,32 @@ func check(e error) {
 
 // Min ...
 // https://mrekucci.blogspot.com/2015/07/dont-abuse-mathmax-mathmin.html
-func Min(x, y int) int {
+func MinInt(x, y int) int {
 	if x < y {
 		return x
 	}
 	return y
 }
 
+func MinInt64(x, y int64) int64 {
+    if x > y {
+        return y
+    }
+    return x
+}
+
 func safeString2Int(s string) (int) {
 	i, err := strconv.Atoi(s)
 	check(err)
 	return i
+}
+
+func bytes2MiB(bytes int) int {
+	return bytes / MiB
+}
+
+func md5str(body []byte) string {
+	hasher := md5.New()
+	hasher.Write(body)
+	return hex.EncodeToString(hasher.Sum(nil))
 }

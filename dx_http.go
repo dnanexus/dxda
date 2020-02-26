@@ -310,7 +310,7 @@ func DxHttpRequest(
 		if (tCnt > 0) {
 			// sleep before retrying. Use bounded exponential backoff.
 			time.Sleep(time.Duration(attemptTimeout) * time.Second)
-			attemptTimeout = Min(2 * attemptTimeout, attemptTimeoutMax)
+			attemptTimeout = MinInt(2 * attemptTimeout, attemptTimeoutMax)
 		}
 
 		var body []byte

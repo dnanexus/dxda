@@ -34,7 +34,7 @@ type DXPart struct {
 
 // a full URL for symbolic links, with a corresponding MD5 checksum for
 // the entire file.
-type DXSymlink {
+type DXSymlink struct {
 	Url string
 	MD5 string
 }
@@ -121,11 +121,11 @@ func submit(
 
 		// If this is a symlink, create structure with
 		// all the relevant information.
-		var symlink DXSymlink = nil
+		var symlink *DXSymlink = nil
 		if descRaw.Symlink != nil {
-			symlink := {
+			symlink := DXSymlink{
 				MD5 : *descRaw.MD5,
-				url : descRaw.Symlink.Url,
+				Url : descRaw.Symlink.Url,
 			}
 		}
 

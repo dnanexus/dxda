@@ -19,11 +19,18 @@ import (
 //  2) a map from file-id to a description of a symbolic link
 type Manifest struct {
 	Files     []DXFile
-	Symlinks  []DXSymlinkFile
 }
 
-// DXFile ...
-type DXFile struct {
+// one interface representing both symbolic links and data files
+type DXFile interface {
+	id()          string
+	projId()      string
+	folder()      string
+	name()        string
+}
+
+// Data file on dnanexus
+type DXFileRegular struct {
 	Folder        string
 	Id            string
 	ProjId        string
@@ -32,7 +39,21 @@ type DXFile struct {
 	Parts         map[string]DXPart
 }
 
-type DXSymlinkFile struct {
+func (reg DXFileRegular) id() string {
+	return reg.Id
+}
+func (reg DXFileRegular) projId() string {
+	return reg.ProjId
+}
+func (reg DXFileRegular) folder() string {
+	return reg.Folder
+}
+func (reg DXFileRegular) name() string {
+	return reg.Name
+}
+
+
+type DXFileSymlink struct {
 	Folder        string
 	Id            string
 	ProjId        string
@@ -41,6 +62,20 @@ type DXSymlinkFile struct {
 	Url           string
 	MD5           string
 }
+
+func (slnk DXFileSymlink) id() string {
+	return slnk.Id
+}
+func (slnk DXFileSymlink) projId() string {
+	return slnk.ProjId
+}
+func (slnk DXFileSymlink) folder() string {
+	return slnk.Folder
+}
+func (slnk DXFileSymlink) name() string {
+	return slnk.Name
+}
+
 
 //----------------------------------------------------------------------------------
 
@@ -165,7 +200,7 @@ func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw manifestRaw) (
 					Url : fDesc.Symlink.Url,
 					MD5 : fDesc.Symlink.MD5,
 				}
-				manifest.Symlinks = append(manifest.Symlinks, dxSymlink)
+				manifest.Files = append(manifest.Files, dxSymlink)
 			}
 		}
 	}
