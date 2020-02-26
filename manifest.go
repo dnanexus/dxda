@@ -74,6 +74,7 @@ type ManifestRawFile struct {
 	Folder        string            `json:"folder"`
 	Id            string            `json:"id"`
 	Name          string            `json:"name"`
+	Parts        *map[string]DXPart `json:"parts,omitempty"`
 }
 
 func validateDirName(p string) error {
@@ -99,7 +100,7 @@ func validProject(pId string) bool {
 	return false
 }
 
-func validate(mRaw ManifestRaw) error {
+func (mRaw ManifestRaw) validate() error {
 	for projId, files := range mRaw {
 		if !validProject(projId) {
 			return fmt.Errorf("project has invalid Id %s", projId)
@@ -117,10 +118,61 @@ func validate(mRaw ManifestRaw) error {
 	return nil
 }
 
+// Check if the manifest includes only regular files with a list of parts.
+// In this case, we assume they have already been validated.
+//
+func (mRaw ManifestRaw) onlyRegularFilesWithParts() bool {
+	for _, files := range mRaw {
+		for _, f := range files {
+			if f.Parts == nil {
+				// parts are missing
+				return false
+			}
+		}
+	}
+
+	PrintLogAndOut("All files have parts, assuming they are not archived or open")
+	return true
+}
+
+
+func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
+	manifest := Manifest{
+		Files : make([]DXFile, 0),
+	}
+
+	// fill in the missing information
+	for projId, files := range mRaw {
+		for _, f := range files {
+			// Get rid of spurious slashes. For example, replace "//" with "/".
+			folder := filepath.Clean(f.Folder)
+
+			// calculate file size by summing the part sizes
+			size := int64(0)
+			for _, part := range *(f.Parts) {
+				size += int64(part.Size)
+			}
+
+			// regular file
+			dxFile := DXFileRegular{
+				Folder : folder,
+				Id : f.Id,
+				ProjId : projId,
+				Name : f.Name,
+				Size : size,
+				Parts : *f.Parts,
+			}
+			manifest.Files = append(manifest.Files, dxFile)
+		}
+	}
+
+	return &manifest, nil
+}
+
 
 // Fill in missing fields for each file. Split into symlinks, and regular files.
 //
-func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw ManifestRaw) (Manifest, error) {
+func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvironment) (*Manifest, error) {
 	tmpHttpClient := NewHttpClient(false)
 
 	// Make a list of all the file-ids
@@ -134,12 +186,11 @@ func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw ManifestRaw) (
 	// describe all the files
 	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, dxEnv, fileIds)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	manifest := Manifest{
-		Files : make([]DXFile),
-		Symlinks : make([]DXSymlinkFile),
+		Files : make([]DXFile, 0),
 	}
 
 	// fill in the missing information
@@ -147,23 +198,23 @@ func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw ManifestRaw) (
 		for _, f := range files {
 			fDesc, ok := dataObjs[f.Id]
 			if !ok {
-				return fmt.Errorf("File %s was not described", f.Id)
+				return nil, fmt.Errorf("File %s was not described", f.Id)
 			}
 			if fDesc.State != "closed" {
-				return fmt.Errorf("File %s is not closed, it is %s",
+				return nil, fmt.Errorf("File %s is not closed, it is %s",
 					f.Id, fDesc.State)
 			}
 			if fDesc.ArchivalState != "live" {
-				return fmt.Errorf("File %s is not live, it cannot be read (state=%s)",
+				return nil, fmt.Errorf("File %s is not live, it cannot be read (state=%s)",
 					f.Id, fDesc.ArchivalState)
 			}
 
 			// Get rid of spurious slashes. For example, replace "//" with "/".
 			folder := filepath.Clean(f.Folder)
 
-			if fDesc.symlink == nil {
+			if fDesc.Symlink == nil {
 				// regular file
-				dxFile := DXFile{
+				dxFile := DXFileRegular{
 					Folder : folder,
 					Id : f.Id,
 					ProjId : projId,
@@ -174,7 +225,7 @@ func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw ManifestRaw) (
 				manifest.Files = append(manifest.Files, dxFile)
 			} else {
 				// symbolic link
-				dxSymlink := DXSymlinkFile{
+				dxSymlink := DXFileSymlink{
 					Folder : folder,
 					Id : f.Id,
 					ProjId : projId,
@@ -188,7 +239,7 @@ func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw ManifestRaw) (
 		}
 	}
 
-	return manifest
+	return &manifest, nil
 }
 
 // read the manifest from a file into a memory structure
@@ -205,10 +256,14 @@ func ReadManifest(fname string, dxEnv *DXEnvironment) (*Manifest, error) {
 		return nil, err
 	}
 
-	if err := validate(m); err != nil {
+	if err := mRaw.validate(); err != nil {
 		return nil, err
 	}
 
+	if mRaw.onlyRegularFilesWithParts() {
+		return mRaw.genTrustedManifest()
+	}
+
 	ctx := context.TODO()
-	return makeManifest(ctx, dxEnv, mRaw)
+	return mRaw.makeValidatedManifest(ctx, dxEnv)
 }

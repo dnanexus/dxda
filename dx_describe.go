@@ -123,7 +123,7 @@ func submit(
 		// all the relevant information.
 		var symlink *DXSymlink = nil
 		if descRaw.Symlink != nil {
-			symlink := DXSymlink{
+			symlink = &DXSymlink{
 				MD5 : *descRaw.MD5,
 				Url : descRaw.Symlink.Url,
 			}

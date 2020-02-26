@@ -135,12 +135,6 @@ type State struct {
 
 //-----------------------------------------------------------------
 
-// PrintLogAndOut ...
-func PrintLogAndOut(str string) {
-	fmt.Printf(str)
-	log.Printf(str)
-}
-
 // Utilities to interact with the DNAnexus API
 // TODO: Create automatic API wrappers for the dx toolkit
 // e.g. via: https://github.com/dnanexus/dx-toolkit/tree/master/src/api_wrappers
@@ -573,7 +567,7 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	// Limit the number of threads
 	runtime.GOMAXPROCS(st.opts.NumThreads)
-	PrintLogAndOut(fmt.Sprintf("Downloading files using %d threads\n", st.opts.NumThreads))
+	PrintLogAndOut("Downloading files using %d threads\n", st.opts.NumThreads)
 
 	jobs := make(chan JobInfo)
 	var wg sync.WaitGroup

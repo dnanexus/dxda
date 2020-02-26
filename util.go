@@ -1,7 +1,8 @@
 package dxda
 
 import (
-	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -156,4 +157,12 @@ func safeString2Int(s string) (int) {
 
 func bytes2MiB(bytes int) int {
 	return bytes / MiB
+}
+
+// print to the log and to stdout
+func PrintLogAndOut(a string, args ...interface{}) {
+	msg := fmt.Sprintf(a, args...)
+
+	fmt.Print(msg)
+	log.Print(msg)
 }
