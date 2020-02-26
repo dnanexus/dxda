@@ -60,7 +60,6 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
-	st.ReadManifest(fname)
 
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
@@ -72,6 +71,18 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		os.Exit(1)
 	}
 
+	// read the manifest from disk, and fill in missing
+	// details.
+	manifest, err := ReadManifest(fname, dxEnv)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	// setup a persistent database to track all downloads
+	st.CreateManifestDB(fname, manifest)
+
+	// start a parallel thread download
 	st.DownloadManifestDB(fname)
 
 	return subcommands.ExitSuccess

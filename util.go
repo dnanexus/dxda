@@ -1,7 +1,6 @@
 package dxda
 
 import (
-	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
@@ -157,10 +156,4 @@ func safeString2Int(s string) (int) {
 
 func bytes2MiB(bytes int) int {
 	return bytes / MiB
-}
-
-func md5str(body []byte) string {
-	hasher := md5.New()
-	hasher.Write(body)
-	return hex.EncodeToString(hasher.Sum(nil))
 }

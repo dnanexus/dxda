@@ -39,18 +39,10 @@ type DXFileRegular struct {
 	Parts         map[string]DXPart
 }
 
-func (reg DXFileRegular) id() string {
-	return reg.Id
-}
-func (reg DXFileRegular) projId() string {
-	return reg.ProjId
-}
-func (reg DXFileRegular) folder() string {
-	return reg.Folder
-}
-func (reg DXFileRegular) name() string {
-	return reg.Name
-}
+func (reg DXFileRegular) id() string     { return reg.Id }
+func (reg DXFileRegular) projId() string { return reg.ProjId }
+func (reg DXFileRegular) folder() string { return reg.Folder }
+func (reg DXFileRegular) name() string   { return reg.Name }
 
 
 type DXFileSymlink struct {
@@ -63,19 +55,10 @@ type DXFileSymlink struct {
 	MD5           string
 }
 
-func (slnk DXFileSymlink) id() string {
-	return slnk.Id
-}
-func (slnk DXFileSymlink) projId() string {
-	return slnk.ProjId
-}
-func (slnk DXFileSymlink) folder() string {
-	return slnk.Folder
-}
-func (slnk DXFileSymlink) name() string {
-	return slnk.Name
-}
-
+func (slnk DXFileSymlink) id() string     { return slnk.Id }
+func (slnk DXFileSymlink) projId() string { return slnk.ProjId }
+func (slnk DXFileSymlink) folder() string { return slnk.Folder }
+func (slnk DXFileSymlink) name() string   { return slnk.Name }
 
 //----------------------------------------------------------------------------------
 
@@ -137,12 +120,12 @@ func validate(mRaw ManifestRaw) error {
 
 // Fill in missing fields for each file. Split into symlinks, and regular files.
 //
-func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw manifestRaw) (Manifest, error) {
+func makeManifest(ctx context.Context, dxEnv *DXEnvironment, mRaw ManifestRaw) (Manifest, error) {
 	tmpHttpClient := NewHttpClient(false)
 
 	// Make a list of all the file-ids
 	var fileIds []string
-	for _, files := range m {
+	for _, files := range mRaw {
 		for _, f := range files {
 			fileIds = append(fileIds, f.Id)
 		}
