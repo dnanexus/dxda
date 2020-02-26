@@ -143,14 +143,14 @@ func processFileParts(orgParts map[string]DXPart) []DXPart {
 	var parts []DXPart
 	for partId, p := range orgParts {
 		p2 := DXPart{
+			Id :   safeString2Int(partId),
 			MD5 :  p.MD5,
 			Size : p.Size,
-			Id :   safeString2Int(partId),
 		}
 		parts = append(parts, p2)
 	}
 
-	// sort by monotonically increasing Id
+	// sort monotonically by increasing part id
 	sort.Slice(parts, func(i, j int) bool { return parts[i].Id < parts[j].Id })
 
 	return parts

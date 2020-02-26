@@ -359,7 +359,7 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
   	        name    text,
 	        size    integer,
 	        url     text,
-	        md5     text,
+	        md5     text
 	);
 	`
 	_, err = db.Exec(sqlStmt)
