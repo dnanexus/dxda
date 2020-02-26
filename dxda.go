@@ -48,10 +48,7 @@ type DXDownloadURL struct {
 // a part to be downloaded. Can be:
 // 1) part of a regular file
 // 2) part of symbolic link (a web address)
-type DBPart interface {
-	Id()      string
-	ProjId()  string
-}
+type DBPart interface {}
 
 // Part of a dnanexus file
 type DBPartRegular struct {
@@ -66,28 +63,31 @@ type DBPartRegular struct {
 	BytesFetched     int
 	DownloadDoneTime int64 // The time when it completed downloading
 }
-func (reg DBPartRegular) Id() string { return reg.FileId }
-func (reg DBPartRegular) ProjId() string { return reg.Project }
 
-// symlink parts do not have IDs, and there is only a
-// global MD5 checksum on the entire file.
+// symlink parts do not have checksum. There is only a
+// global MD5 checksum on the entire file. There is also
+// no need to get a pre-auth URL for the file
 type DBPartSymlink struct {
 	FileId           string
 	Project          string
 	FileName         string
 	Folder           string
+	PartId           int
 	Offset           int64
 	Size             int
 	BytesFetched     int
 	DownloadDoneTime int64 // The time when it completed downloading
 	Url              string
 }
-func (slnk DBPartSymlink) Id() string { return slnk.FileId }
-func (slnk DBPartSymlink) ProjId() string { return slnk.Project }
 
 // JobInfo ...
 type JobInfo struct {
 	part             DBPart
+	wg               *sync.WaitGroup
+}
+
+type JobCheckFileMd5 struct {
+	slnk             DXFileSymlink
 	wg               *sync.WaitGroup
 }
 
@@ -254,6 +254,7 @@ func (st *State) addRegularFileToTable(txn *sql.Tx, f DXFileRegular) {
 func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 	// split the symbolic link into chunks, and download several in parallel
 	offset := int64(0)
+	pId := 1
 
 	for offset < slnk.Size {
 		// make sure we don't go over the file size
@@ -265,12 +266,13 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 		}
 		sqlStmt := fmt.Sprintf(`
 				INSERT INTO manifest_symlink_stats
-				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%s');
+				VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s');
 				`,
-			slnk.Id, slnk.ProjId, slnk.Name, slnk.Folder, offset, partLen, 0, 0, slnk.Url)
+			slnk.Id, slnk.ProjId, slnk.Name, slnk.Folder, pId, offset, partLen, 0, 0, slnk.Url)
 		_, err := txn.Exec(sqlStmt)
 		check(err)
 		offset += partLen
+		pId += 1
 	}
 }
 
@@ -309,6 +311,7 @@ func (st *State) CreateManifestDB(fname string) {
 		project text,
 		name text,
 		folder text,
+		part_id integer,
                 offset integer,
 		size integer,
 		bytes_fetched integer,
@@ -464,6 +467,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 			p := j.part.(DBPartRegular)
 			u := st.createURL(p, httpClient)
 			st.downloadDBPart(httpClient, j.part, j.wg, u)
+
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
 			u := DXDownloadURL{
@@ -471,23 +475,6 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 				Headers : make(map[string]string, 0),
 			}
 			st.downloadDBPart(httpClient, j.part, j.wg, u)
-		}
-	}
-	wg.Done()
-}
-
-func (st *State) fileIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
-	for j := range jobs {
-		st.checkDBPart(j.part, j.wg)
-
-		if st.dxEnv.DxJobId == "" {
-			// running on a console, erase the previous line
-			// TODO: Get rid of this temporary space-padding fix for carriage returns
-			fmt.Printf("                                                                      \r")
-			fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartId)
-		} else {
-			// We are on a dx-job, and we want to see the history of printouts
-			fmt.Printf("%s:%d\n", j.part.FileName, j.part.PartId)
 		}
 	}
 	wg.Done()
@@ -535,7 +522,7 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	for rows.Next() {
 		var p DBPartSymlink
-		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.Offset,
+		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
 			&p.Size, &p.BytesFetched, &p.DownloadDoneTime, &p.Url)
 		check(err)
 		j := JobInfo {
@@ -566,39 +553,6 @@ func (st *State) DownloadManifestDB(fname string) {
 	PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
 }
 
-// CheckFileIntegrity ...
-func (st *State) CheckFileIntegrity() {
-	cnt := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched == size")
-	st.mutex.Lock()
-	rows, err := st.db.Query("SELECT * FROM manifest_regular_stats WHERE bytes_fetched == size")
-	st.mutex.Unlock()
-	check(err)
-
-	jobs := make(chan JobInfo, cnt)
-
-	var wg sync.WaitGroup
-
-	for i := 1; rows.Next(); i++ {
-		var p DBPart
-		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.MD5, &p.Size,
-			&p.BlockSize, &p.BytesFetched, &p.DownloadDoneTime)
-		check(err)
-		var j JobInfo
-		j.part = p
-		j.wg = &wg
-		jobs <- j
-	}
-	close(jobs)
-	rows.Close()
-
-	for w := 1; w <= st.opts.NumThreads; w++ {
-		wg.Add(1)
-		go st.fileIntegrityWorker(w, jobs, &wg)
-	}
-	wg.Wait()
-	fmt.Println("")
-	fmt.Println("Integrity check complete.")
-}
 
 // UpdateDBPart.
 func (st *State) updateDBPart(p DBPart) {
@@ -610,11 +564,23 @@ func (st *State) updateDBPart(p DBPart) {
 	defer tx.Commit()
 
 	now := time.Now().UnixNano()
-	_, err = tx.Exec(fmt.Sprintf(
-		"UPDATE manifest_regular_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
-		p.Size, now, p.FileId, p.PartId))
-	check(err)
 
+	switch p.(type) {
+	case DBPartRegular:
+		reg := p.(DBPartRegular)
+		_, err = tx.Exec(fmt.Sprintf(
+			"UPDATE manifest_regular_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
+			reg.Size, now, reg.FileId, reg.PartId))
+		check(err)
+
+	case DBPartSymlink:
+		slnk := p.(DBPartSymlink)
+		_, err = tx.Exec(fmt.Sprintf(
+			"UPDATE manifest_symlink_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
+			slnk.Size, now, slnk.FileId, slnk.PartId))
+		check(err)
+
+	}
 }
 
 // ResetDBPart ...
@@ -626,10 +592,21 @@ func (st *State) resetDBPart(p DBPart) {
 	check(err)
 	defer tx.Commit()
 
-	_, err = tx.Exec(fmt.Sprintf(
-		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s' AND part_id = '%d'",
-		p.FileId, p.PartId))
-	check(err)
+	switch p.(type) {
+	case DBPartRegular:
+		reg := p.(DBPartRegular)
+		_, err = tx.Exec(fmt.Sprintf(
+			"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s' AND part_id = '%d'",
+			reg.FileId, reg.PartId))
+		check(err)
+
+	case DBPartSymlink:
+		slnk := p.(DBPartSymlink)
+		_, err = tx.Exec(fmt.Sprintf(
+			"UPDATE manifest_symlink_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s' AND part_id = '%d'",
+			slnk.FileId, slnk.PartId))
+		check(err)
+	}
 }
 
 // ResetDBFile ...
@@ -641,10 +618,21 @@ func (st *State) resetDBFile(p DBPart) {
 	check(err)
 	defer tx.Commit()
 
-	_, err = tx.Exec(fmt.Sprintf(
-		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
-		p.FileId))
-	check(err)
+	switch p.(type) {
+	case DBPartRegular:
+		reg := p.(DBPartRegular)
+		_, err = tx.Exec(fmt.Sprintf(
+			"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
+			reg.FileId))
+		check(err)
+
+	case DBPartSymlink:
+		slnk := p.(DBPartSymlink)
+		_, err = tx.Exec(fmt.Sprintf(
+			"UPDATE manifest_symlink_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
+			slnk.FileId))
+		check(err)
+	}
 }
 
 // Download part of a file
@@ -747,7 +735,7 @@ func dxHttpRequestChecksum(
 }
 
 // check that a database part has the correct md5 checksum
-func (st *State) checkDBPart(p DBPart, wg *sync.WaitGroup) {
+func (st *State) checkDBPartRegular(p DBPartRegular) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
 		st.resetDBFile(p)
@@ -755,7 +743,7 @@ func (st *State) checkDBPart(p DBPart, wg *sync.WaitGroup) {
 	} else {
 		localf, err := os.Open(fname)
 		check(err)
-		_, err = localf.Seek(int64((p.PartId-1)*p.BlockSize), 0)
+		_, err = localf.Seek(p.Offset)
 		check(err)
 		body := make([]byte, p.Size)
 		_, err = localf.Read(body)
@@ -767,4 +755,140 @@ func (st *State) checkDBPart(p DBPart, wg *sync.WaitGroup) {
 			st.resetDBPart(p)
 		}
 	}
+
+	if st.dxEnv.DxJobId == "" {
+		// running on a console, erase the previous line
+		// TODO: Get rid of this temporary space-padding fix for carriage returns
+		fmt.Printf("                                                                      \r")
+		fmt.Printf("%s:%d\r", j.part.FileName, j.part.PartId)
+	} else {
+		// We are on a dx-job, and we want to see the history of printouts
+		fmt.Printf("%s:%d\n", j.part.FileName, j.part.PartId)
+	}
+
+}
+
+func (st *State) filePartIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
+	for j := range jobs {
+		switch j.part.(type) {
+		case DBPartRegular:
+			p := j.part.(DBPartRegular)
+			st.checkDBPartRegular(p)
+		default:
+			panic(fmt.Sprintf("bad file kind %v", j.part))
+		}
+	}
+	wg.Done()
+}
+
+
+func (st *State) checkSymlinkIntegrity(slnk DBPartSymlink) {
+	fname := fmt.Sprintf(".%s/%s", slnk.Folder, slnk.FileName)
+	if _, err := os.Stat(fname); os.IsNotExist(err) {
+		st.resetDBFile(p)
+		fmt.Printf("File %s does not exist. Please re-issue the download command to resolve.", fname)
+	} else {
+		localf, err := os.Open(fname)
+		check(err)
+		defer localf.Close()
+
+		// This is supposed to NOT load the entire file into memory.
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, localf); err != nil {
+			log.Fatal(err)
+		}
+		diskSum := hex.EncodeToString(hasher.Sum(nil))
+
+		if diskSum != p.MD5 {
+			fmt.Printf("Identified md5sum mismatch for symlink %s. Please re-issue the download command to resolve.\n",
+				p.FileName, slnk.Url)
+			st.resetDBPart(p)
+		}
+	}
+
+	if st.dxEnv.DxJobId == "" {
+		// running on a console, erase the previous line
+		// TODO: Get rid of this temporary space-padding fix for carriage returns
+		fmt.Printf("                                                                      \r")
+		fmt.Printf("%s\r", slnk.FileName)
+	} else {
+		// We are on a dx-job, and we want to see the history of printouts
+		fmt.Printf("%s\r", slnk.FileName)
+	}
+}
+
+func (st *State) fileCheckSymlinkWorker(id int, jobs <-chan JobCheckFileMd5, wg *sync.WaitGroup) {
+	for j := range jobs {
+		// 1. calculate the MD5 checksum of the entire file.
+		// 2. compare it to the expected result
+		st.checkSymlinkIntegrity(j.slnk)
+	}
+	wg.Done()
+}
+
+
+// make sure all the part checksums are correct on disk.
+func (st *State) checkRegularFileIntegrity() {
+	st.mutex.Lock()
+	rows, err := st.db.Query("SELECT * FROM manifest_regular_stats WHERE bytes_fetched == size")
+	st.mutex.Unlock()
+	check(err)
+
+	jobs := make(chan JobInfo)
+
+	var wg sync.WaitGroup
+	for rows.Next() {
+		var p DBPartRegular
+		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
+			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime)
+		check(err)
+		j := JobInfo{
+			part : p,
+			wg : &wg,
+		}
+		jobs <- j
+	}
+	rows.Close()
+	close(jobs)
+
+	for w := 1; w <= st.opts.NumThreads; w++ {
+		wg.Add(1)
+		go st.filePartIntegrityWorker(w, jobs, &wg)
+	}
+	wg.Wait()
+	fmt.Println("")
+	fmt.Println("Integrity check for regular files complete.")
+}
+
+func (st *State) checkSymlinkIntegrity() {
+	var wg sync.WaitGroup
+	jobs := make(chan JobCheckFileMd5)
+
+	// build a job for each symlink.
+	for f := range st.manifest.Files {
+		switch f.(type) {
+		case DXFileRegular:
+			continue
+		case DXFileSymlink:
+			j := JobCheckFileMd5{
+				slnk : f.(DXFileSymlink),
+				wg : &wg,
+			}
+			jobs <- j
+		}
+	}
+
+	for w := 1; w <= st.opts.NumThreads; w++ {
+		wg.Add(1)
+		go st.fileCheckSymlinkWorker(w, jobs, &wg)
+	}
+	wg.Wait()
+	fmt.Println("")
+	fmt.Println("Integrity check for symlinks files complete.")
+}
+
+// check the on-disk integrity of all files
+func (st *State) CheckFileIntegrity() {
+	st.checkRegularFileIntegrity()
+	st.checkSymlinkIntegrity()
 }
