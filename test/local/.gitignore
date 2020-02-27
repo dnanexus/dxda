@@ -1,0 +1,4 @@
+# artifacts from running the download agent
+*.download.log
+*.stats.db
+symlinks

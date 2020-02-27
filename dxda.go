@@ -698,8 +698,15 @@ func (st *State) resetDBPart(p DBPartRegular) {
 	check(err)
 }
 
-// ResetDBFile ...
-func (st *State) resetDBFile(fid string, symlink bool) {
+// Remove the local file, and zero out all the parts in the
+// database.
+func (st *State) resetRegularFile(p DBPartRegular) {
+	// zero out the file
+	folder := path.Join("./", p.Folder)
+	fname := path.Join(folder, p.FileName)
+	err := os.Truncate(fname, 0)
+	check(err)
+
 	st.mutex.Lock()
 	defer st.mutex.Unlock()
 
@@ -707,17 +714,32 @@ func (st *State) resetDBFile(fid string, symlink bool) {
 	check(err)
 	defer tx.Commit()
 
-	if symlink {
-		_, err = tx.Exec(fmt.Sprintf(
-			"UPDATE manifest_symlink_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
-			fid))
-		check(err)
-	} else {
-		_, err = tx.Exec(fmt.Sprintf(
-			"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
-			fid))
-		check(err)
-	}
+	_, err = tx.Exec(fmt.Sprintf(
+		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
+		p.FileId))
+	check(err)
+}
+
+// Remove the local file, and zero out all the parts in the
+// database.
+func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
+	// zero out the file
+	folder := path.Join("./", slnk.Folder)
+	fname := path.Join(folder, slnk.Name)
+	err := os.Truncate(fname, 0)
+	check(err)
+
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
+	tx, err := st.db.Begin()
+	check(err)
+	defer tx.Commit()
+
+	_, err = tx.Exec(fmt.Sprintf(
+		"UPDATE manifest_symlink_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
+		slnk.Id))
+	check(err)
 }
 
 
@@ -785,7 +807,7 @@ func (st *State) dxHttpRequestChecksum(
 func (st *State) checkDBPartRegular(p DBPartRegular) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
-		st.resetDBFile(p.FileId, false)
+		st.resetRegularFile(p)
 		fmt.Printf("File %s does not exist. Please re-issue the download command to resolve.", fname)
 	} else {
 		localf, err := os.Open(fname)
@@ -822,34 +844,35 @@ func (st *State) filePartIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.W
 func (st *State) validateSymlinkChecksum(f DXFileSymlink) {
 	fname := fmt.Sprintf(".%s/%s", f.Folder, f.Name)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
-		st.resetDBFile(f.Id, true)
+		st.resetSymlinkFile(f)
 		fmt.Printf("File %s does not exist. Please re-issue the download command to resolve.", fname)
-	} else {
-		localf, err := os.Open(fname)
-		check(err)
-		defer localf.Close()
-
-		// This is supposed to NOT load the entire file into memory.
-		hasher := md5.New()
-		if _, err := io.Copy(hasher, localf); err != nil {
-			log.Fatal(err)
-		}
-		diskSum := hex.EncodeToString(hasher.Sum(nil))
-
-		if diskSum == f.MD5 {
-			if st.opts.Verbose {
-				fmt.Printf("file %s,symlink %s, has the correct checksum %s\n",
-					f.Name, f.Url, f.MD5)
-			}
-		} else {
-			fmt.Printf("Identified md5sum mismatch for symlink %s. Please re-issue the download command to resolve.\n",
-				f.Url)
-			st.resetDBFile(f.Id, true)
-		}
+		return
 	}
 
 	if st.opts.Verbose {
-		st.printToStdout("%s", f.Name)
+		st.printToStdout("validate symlink %s", f.Name)
+	}
+
+	localf, err := os.Open(fname)
+	check(err)
+	defer localf.Close()
+
+	// This is supposed to NOT load the entire file into memory.
+	hasher := md5.New()
+	if _, err := io.Copy(hasher, localf); err != nil {
+		log.Fatal(err)
+	}
+	diskSum := hex.EncodeToString(hasher.Sum(nil))
+
+	if diskSum == f.MD5 {
+		if st.opts.Verbose {
+			fmt.Printf("file %s,symlink %s, has the correct checksum %s\n",
+				f.Name, f.Url, f.MD5)
+		}
+	} else {
+		fmt.Printf("Identified md5sum mismatch for symlink %s. Please re-issue the download command to resolve.\n",
+			f.Url)
+		st.resetSymlinkFile(f)
 	}
 }
 
