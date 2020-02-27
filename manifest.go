@@ -132,7 +132,7 @@ func (mRaw ManifestRaw) onlyRegularFilesWithParts() bool {
 		}
 	}
 
-	PrintLogAndOut("All files have parts, assuming they are not archived or open")
+	PrintLogAndOut("All files have parts, assuming they are not archived or open\n")
 	return true
 }
 

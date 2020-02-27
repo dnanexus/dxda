@@ -375,7 +375,7 @@ func DxAPI(
 
 	// Safety procedure to force timeout to prevent hanging
 	ctx2, cancel := context.WithCancel(ctx)
-	timer := time.AfterFunc(requestOverallTimout, func() {
+	timer := time.AfterFunc(dxApiOverallTimout, func() {
 		cancel()
 	})
 	defer timer.Stop()

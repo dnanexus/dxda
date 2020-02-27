@@ -14,6 +14,7 @@ import (
 
 type downloadCmd struct {
 	maxThreads int
+	verbose bool
 }
 
 const downloadUsage = "dx-download-agent download [-max_threads=N] <manifest.json.bz2>"
@@ -25,6 +26,7 @@ func (*downloadCmd) Usage() string {
 }
 func (p *downloadCmd) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when downloading files")
+	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
 func check(e error) {
@@ -53,10 +55,11 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
+	dxda.PrintLogAndOut("Obtained token using %s\n", method)
 
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
+	opts.Verbose = p.verbose
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
@@ -127,6 +130,7 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 type inspectCmd struct {
 	maxThreads int
+	verbose bool
 }
 
 const inspectUsage = "dx-download-agent inspect [-max_threads=N] <manifest.json.bz2>"
@@ -140,6 +144,7 @@ func (*inspectCmd) Usage() string {
 }
 func (p *inspectCmd) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when inspecting files")
+	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
 func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
@@ -158,6 +163,7 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
+	opts.Verbose = p.verbose
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()

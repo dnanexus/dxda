@@ -17,13 +17,18 @@ const (
 	GiB                   = 1024 * MiB
 )
 const (
-	// An http request should never take more than 10 minutes.
+	// Limit on an http request to S3/Azure object storage
 	requestOverallTimout = 10 * time.Minute
+
+	// An API request to the dnanexus servers should never take more
+	// than this amount of time
+	dxApiOverallTimout = 2 * time.Minute
 )
 
 // Configuration options for the download agent
 type Opts struct {
-	NumThreads int // # of workers to process downloads
+	NumThreads int   // number of workers to process downloads
+	Verbose    bool  // verbose logging
 }
 
 // A subset of the configuration parameters that the dx-toolkit uses.
@@ -158,10 +163,6 @@ func safeString2Int(s string) int {
 	i, err := strconv.Atoi(s)
 	check(err)
 	return i
-}
-
-func bytes2MiB(bytes int) int {
-	return bytes / MiB
 }
 
 // print to the log and to stdout
