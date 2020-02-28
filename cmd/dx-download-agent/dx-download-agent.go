@@ -12,6 +12,7 @@ import (
 	"github.com/google/subcommands"
 )
 
+// download subcommand
 type downloadCmd struct {
 	maxThreads int
 	verbose bool
@@ -89,12 +90,13 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	return subcommands.ExitSuccess
 }
 
+// report on progress
 type progressCmd struct {
 	maxThreads int
 }
 
 func (*progressCmd) Name() string     { return "progress" }
-func (*progressCmd) Synopsis() string { return "Download files in a manifest" }
+func (*progressCmd) Synopsis() string { return "show current download progress" }
 
 const progressUsage = "dx-download-agent progress <manifest.json.bz2>"
 
@@ -128,6 +130,7 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	return subcommands.ExitSuccess
 }
 
+// inspect the files, and see that there are no checksum errors
 type inspectCmd struct {
 	maxThreads int
 	verbose bool
@@ -175,6 +178,21 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	return subcommands.ExitSuccess
 }
 
+// get the version
+type versionCmd struct {
+  capitalize bool
+}
+
+func (*versionCmd) Name() string     { return "version" }
+func (*versionCmd) Synopsis() string { return "get the version" }
+func (*versionCmd) Usage() string    { return   "get the dx-download-agent version" }
+func (p *versionCmd) SetFlags(f *flag.FlagSet) {}
+func (p *versionCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	fmt.Println(dxda.Version)
+	return subcommands.ExitSuccess
+}
+
+
 // The CLI is simply a wrapper around the dxda package
 func main() {
 	subcommands.Register(subcommands.HelpCommand(), "")
@@ -183,6 +201,7 @@ func main() {
 	subcommands.Register(&downloadCmd{}, "")
 	subcommands.Register(&progressCmd{}, "")
 	subcommands.Register(&inspectCmd{}, "")
+	subcommands.Register(&versionCmd{}, "")
 
 	// TODO: modify this to use individual subcommand help
 	if len(os.Args) == 1 {
