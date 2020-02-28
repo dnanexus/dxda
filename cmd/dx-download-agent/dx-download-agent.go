@@ -12,8 +12,10 @@ import (
 	"github.com/google/subcommands"
 )
 
+// download subcommand
 type downloadCmd struct {
 	maxThreads int
+	verbose bool
 }
 
 const downloadUsage = "dx-download-agent download [-max_threads=N] <manifest.json.bz2>"
@@ -25,6 +27,7 @@ func (*downloadCmd) Usage() string {
 }
 func (p *downloadCmd) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when downloading files")
+	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
 func check(e error) {
@@ -53,35 +56,47 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	dxda.PrintLogAndOut(fmt.Sprintf("Obtained token using %s\n", method))
+	dxda.PrintLogAndOut("Obtained token using %s\n", method)
 
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
+	opts.Verbose = p.verbose
 
-	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
-		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
-		dxda.CreateManifestDB(fname)
+	st := dxda.NewDxDa(dxEnv, fname, opts)
+	defer st.Close()
+
+	// read the manifest from disk, and fill in missing
+	// details.
+	manifest, err := dxda.ReadManifest(fname, &dxEnv)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
-	st := dxda.Init(dxEnv, fname, opts)
-	defer st.Close()
+	// setup a persistent database to track all downloads
+	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
+		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
+		st.CreateManifestDB(*manifest, fname)
+	}
 
 	if err := st.CheckDiskSpace(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
+	// start a parallel download
 	st.DownloadManifestDB(fname)
 
 	return subcommands.ExitSuccess
 }
 
+// report on progress
 type progressCmd struct {
 	maxThreads int
 }
 
 func (*progressCmd) Name() string     { return "progress" }
-func (*progressCmd) Synopsis() string { return "Download files in a manifest" }
+func (*progressCmd) Synopsis() string { return "show current download progress" }
 
 const progressUsage = "dx-download-agent progress <manifest.json.bz2>"
 
@@ -107,7 +122,7 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
 
-	st := dxda.Init(dxEnv, fname, opts)
+	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
 
 	st.InitDownloadStatus()
@@ -115,8 +130,10 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	return subcommands.ExitSuccess
 }
 
+// inspect the files, and see that there are no checksum errors
 type inspectCmd struct {
 	maxThreads int
+	verbose bool
 }
 
 const inspectUsage = "dx-download-agent inspect [-max_threads=N] <manifest.json.bz2>"
@@ -130,6 +147,7 @@ func (*inspectCmd) Usage() string {
 }
 func (p *inspectCmd) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when inspecting files")
+	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
 func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
@@ -148,13 +166,32 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 
 	var opts dxda.Opts
 	opts.NumThreads = p.maxThreads
+	opts.Verbose = p.verbose
 
-	st := dxda.Init(dxEnv, fname, opts)
+	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
 
-	st.CheckFileIntegrity()
+	integrityFlag := st.CheckFileIntegrity()
+	if !integrityFlag {
+		return subcommands.ExitFailure
+	}
 	return subcommands.ExitSuccess
 }
+
+// get the version
+type versionCmd struct {
+  capitalize bool
+}
+
+func (*versionCmd) Name() string     { return "version" }
+func (*versionCmd) Synopsis() string { return "get the version" }
+func (*versionCmd) Usage() string    { return   "get the dx-download-agent version" }
+func (p *versionCmd) SetFlags(f *flag.FlagSet) {}
+func (p *versionCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	fmt.Println(dxda.Version)
+	return subcommands.ExitSuccess
+}
+
 
 // The CLI is simply a wrapper around the dxda package
 func main() {
@@ -164,6 +201,7 @@ func main() {
 	subcommands.Register(&downloadCmd{}, "")
 	subcommands.Register(&progressCmd{}, "")
 	subcommands.Register(&inspectCmd{}, "")
+	subcommands.Register(&versionCmd{}, "")
 
 	// TODO: modify this to use individual subcommand help
 	if len(os.Args) == 1 {

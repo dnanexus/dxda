@@ -112,6 +112,10 @@ Fields (all fields are strings unless otherwise specified)
 
 It is up to the implementation to decide whether or not `bytes_fetched` is updated in a more coarse- vs. fine-grained fashion.  For example, `bytes_fetched` can be updated only when the part download is complete. In this case, its values will only be `0` or the value of `size`.
 
+The manifest includes four fields for each file: `file_id`, `project`, `name`, and `parts`. If all four are specified, the file is assumed to be live and closed, making it available for download. If the `parts` field is omitted, the file will be described on the platform. Bulk describes are used to do this efficiently for many files in batch. Files that are archived or not closed cannot be downloaded, and will trigger an error.
+
+It is possible to download DNAx symbolic links, which do not have parts. The required fields for symbolic links are `file_id`, `project`, and `name`. Note that a symbolic link has a global MD5 checksum, which is checked at the end of the download.
+
 ## Proxy and TLS settings
 
 To direct `dx-download-agent` to a proxy, please set the `HTTP_PROXY` environment variable to something like `export HTTP_PROXY=hostname:port`.  `HTTPS_PROXY` is also supported.
@@ -126,7 +130,7 @@ For convenience, the `create_manifest_bulk.py` file in the `scripts/` directory 
 python create_manifest_bulk.py --folder "Project:/Folder" --recursive --outfile "myfiles.manifest.json.bz2"
 ```
 
-Here, a manifest is created for recursively *all* files under the project name `Project` and in the folder `Folder`. 
+Here, a manifest is created for recursively *all* files under the project name `Project` and in the folder `Folder`.
 
 The manifest can be subsequently filtered using the `filter_manifest.py` script.  For example, if you want to capture files in a particular folder (e.g. `Folder`) with `testcall` in them (e.g. `/Folder/ALL.chr22._testcall_20190222.genotypes.vcf.gz`), you can run the command:
 
@@ -163,7 +167,7 @@ For developing and experimenting with the source, the [Dockerfile](https://githu
 
 ## Moving downloaded files
 
-After successfully downloading (and optionally inspecting post-download) it should be safe to move files to your desired location. 
+After successfully downloading (and optionally inspecting post-download) it should be safe to move files to your desired location.
 
 **WARNING** In general we advise not to move files during the course of a download but moving them could be safe in certain special cases.   The download agent works by maintaining a lightweight database of what parts of files have and havent been downloaded so that is what it primarily operates off of.  This means that even if you move files the download agent won’t realize it until you run the ‘inspect’ sub command that performs post-download checks for file integrity on disk. The inspect command will notice the files are missing, update the database, and when you re-issue a download command attempt to download them again.  Therefore, if you move completed files and don’t run the inspect subcommand, the download agent should continue from where it left off.  This being said, there is a danger in moving files is if a file download is not yet complete.  In that case you will have moved an incomplete file.
 

@@ -1,0 +1,7 @@
+# artifacts from running the download agent
+*.download.log
+*.stats.db
+
+# subdirectories created while testing
+symlinks
+mini
