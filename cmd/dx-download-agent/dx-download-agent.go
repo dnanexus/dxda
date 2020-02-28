@@ -168,7 +168,10 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
 
-	st.CheckFileIntegrity()
+	integrityFlag := st.CheckFileIntegrity()
+	if !integrityFlag {
+		return subcommands.ExitFailure
+	}
 	return subcommands.ExitSuccess
 }
 

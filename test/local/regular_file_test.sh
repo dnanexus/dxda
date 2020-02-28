@@ -5,7 +5,7 @@ echo "current dir=$CRNT_DIR"
 DXDA_ROOT=$CRNT_DIR/../..
 
 dxda=$GOPATH/bin/dxda
-manifest=$CRNT_DIR/manifest_symlinks.json.bz2
+manifest=$CRNT_DIR/manifest_regular.json.bz2
 
 # make sure we have the dx-download-agent executable in hand
 go build -o $dxda $DXDA_ROOT/cmd/dx-download-agent/dx-download-agent.go
@@ -16,7 +16,7 @@ $dxda inspect $manifest
 
 # intentionally corrupt one file, this should be detected when
 # running inspect
-echo "heelo" >> symlinks/1000G_2504_high_coverage.sequence.index
+echo "hello world" > mini/bugs/argument_list_too_long.wdl
 
 set +e
 $dxda inspect $manifest
@@ -39,4 +39,4 @@ if [[ $rc != 0 ]]; then
     exit 1
 fi
 
-echo "Symlink test was successful"
+echo "Regular files test was successful"

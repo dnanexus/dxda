@@ -101,11 +101,6 @@ type JobInfo struct {
 	wg               *sync.WaitGroup
 }
 
-type JobCheckFileMd5 struct {
-	slnk             DXFileSymlink
-	wg               *sync.WaitGroup
-}
-
 // DownloadStatus ...
 type DownloadStatus struct {
 	NumParts         int64
@@ -804,35 +799,46 @@ func (st *State) dxHttpRequestChecksum(
 }
 
 // check that a database part has the correct md5 checksum
-func (st *State) checkDBPartRegular(p DBPartRegular) {
+func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
 		st.resetRegularFile(p)
-		fmt.Printf("File %s does not exist. Please re-issue the download command to resolve.", fname)
-	} else {
-		localf, err := os.Open(fname)
-		check(err)
-		body := make([]byte, p.Size)
-		_, err = localf.ReadAt(body, p.Offset)
-		check(err)
-		localf.Close()
+		msg := fmt.Sprintf(
+			"File %s does not exist. Please re-issue the download command to resolve.",
+			fname)
+		integrityMsgs <- msg
+		return
+	}
 
-		if st.md5str(body) != p.MD5 {
-			fmt.Printf("Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.\n", p.FileName, p.PartId)
-			st.resetDBPart(p)
-		}
+	localf, err := os.Open(fname)
+	check(err)
+	defer localf.Close()
+
+	body := make([]byte, p.Size)
+	_, err = localf.ReadAt(body, p.Offset)
+	if err != nil {
+		st.resetDBPart(p)
+		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+		return
 	}
-	if st.opts.Verbose {
-		st.printToStdout("%s:%d", p.FileName, p.PartId)
+
+	if st.md5str(body) != p.MD5 {
+		st.resetDBPart(p)
+		msg := fmt.Sprintf(
+			"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
+			p.FileName, p.PartId)
+		integrityMsgs <- msg
 	}
+
+	// checksum is good
 }
 
-func (st *State) filePartIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
+func (st *State) filePartIntegrityWorker(id int, jobs <-chan JobInfo, integrityMsgs chan string, wg *sync.WaitGroup) {
 	for j := range jobs {
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
-			st.checkDBPartRegular(p)
+			st.checkDBPartRegular(p, integrityMsgs)
 		default:
 			panic(fmt.Sprintf("bad file kind %v", j.part))
 		}
@@ -841,7 +847,7 @@ func (st *State) filePartIntegrityWorker(id int, jobs <-chan JobInfo, wg *sync.W
 }
 
 
-func (st *State) validateSymlinkChecksum(f DXFileSymlink) {
+func (st *State) validateSymlinkChecksum(f DXFileSymlink, integrityMsgs chan string) {
 	fname := fmt.Sprintf(".%s/%s", f.Folder, f.Name)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
 		st.resetSymlinkFile(f)
@@ -870,20 +876,28 @@ func (st *State) validateSymlinkChecksum(f DXFileSymlink) {
 				f.Name, f.Url, f.MD5)
 		}
 	} else {
-		fmt.Printf("Identified md5sum mismatch for symlink %s. Please re-issue the download command to resolve.\n",
-			f.Url)
+		msg := fmt.Sprintf(`
+Identified md5sum mismatch for symlink {
+    name : %s,
+    symlink : %s,
+    checksum : %s
+}
+Please re-issue the download command to resolve`,
+			f.Name, f.Url, f.MD5)
+		integrityMsgs <- msg
 		st.resetSymlinkFile(f)
 	}
 }
 
 // make sure all the part checksums are correct on disk.
-func (st *State) checkAllRegularFileIntegrity() {
+func (st *State) checkAllRegularFileIntegrity() bool {
 	cnt := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched == size")
 	if cnt == 0 {
 		fmt.Printf("%d regular file parts to check\n", cnt)
-		return
+		return true
 	}
 	jobs := make(chan JobInfo, cnt)
+	integrityMsgs := make(chan string, cnt)
 	var wg sync.WaitGroup
 
 	st.mutex.Lock()
@@ -907,24 +921,37 @@ func (st *State) checkAllRegularFileIntegrity() {
 
 	for w := 1; w <= st.opts.NumThreads; w++ {
 		wg.Add(1)
-		go st.filePartIntegrityWorker(w, jobs, &wg)
+		go st.filePartIntegrityWorker(w, jobs, integrityMsgs, &wg)
 	}
 	wg.Wait()
+	close(integrityMsgs)
+
+	// read all the integrity messages
+	numIntegrityErrors := 0
+	for msg := range integrityMsgs {
+		fmt.Println(msg)
+		numIntegrityErrors++
+	}
+	if numIntegrityErrors > 0 {
+		// there were errors, validation failed
+		return false
+	}
 
 	fmt.Println("")
 	fmt.Println("Integrity check for regular files complete.")
+	return true
 }
 
-func (st *State) fileCheckSymlinkWorker(id int, jobs <-chan JobCheckFileMd5, wg *sync.WaitGroup) {
+func (st *State) fileCheckSymlinkWorker(id int, jobs <-chan DXFileSymlink, integrityMsgs chan string, wg *sync.WaitGroup) {
 	for j := range jobs {
 		// 1. calculate the MD5 checksum of the entire file.
 		// 2. compare it to the expected result
-		st.validateSymlinkChecksum(j.slnk)
+		st.validateSymlinkChecksum(j, integrityMsgs)
 	}
 	wg.Done()
 }
 
-func (st *State) checkAllSymlinkIntegrity() {
+func (st *State) checkAllSymlinkIntegrity() bool {
 	st.mutex.Lock()
 	rows, err := st.db.Query("SELECT * FROM symlinks")
 	st.mutex.Unlock()
@@ -939,7 +966,7 @@ func (st *State) checkAllSymlinkIntegrity() {
 	}
 	rows.Close()
 	if len(allSymlinks) == 0 {
-		return
+		return true
 	}
 
 	// skip files that weren't entirely downloaded
@@ -954,13 +981,14 @@ func (st *State) checkAllSymlinkIntegrity() {
 		completed = append(completed, slnk)
 	}
 	numSymlinksCompleted := len(completed)
-	fmt.Printf("%d symlink files, %d have completed downloading\n",
+	fmt.Printf("%d symlinks %d have completed downloading\n",
 		len(allSymlinks), numSymlinksCompleted)
 	if numSymlinksCompleted == 0 {
-		return
+		return true
 	}
 
-	jobs := make(chan JobCheckFileMd5, numSymlinksCompleted)
+	jobs := make(chan DXFileSymlink, numSymlinksCompleted)
+	integrityMsgs := make(chan string, numSymlinksCompleted)
 	var wg sync.WaitGroup
 
 	// Create a job to verify all of the symlinks.
@@ -969,26 +997,45 @@ func (st *State) checkAllSymlinkIntegrity() {
 		if st.opts.Verbose {
 			fmt.Println("Checking symlink %s", slnk.Url)
 		}
-		j := JobCheckFileMd5{
-			slnk : slnk,
-			wg : &wg,
-		}
-		jobs <- j
+		jobs <- slnk
 	}
 	close(jobs)
 
 	// start checking threads
 	for w := 1; w <= st.opts.NumThreads; w++ {
 		wg.Add(1)
-		go st.fileCheckSymlinkWorker(w, jobs, &wg)
+		go st.fileCheckSymlinkWorker(w, jobs, integrityMsgs, &wg)
 	}
 	wg.Wait()
+	close(integrityMsgs)
+
+	// read all the integrity messages
+	numIntegrityErrors := 0
+	for msg := range integrityMsgs {
+		fmt.Println(msg)
+		numIntegrityErrors++
+	}
+	if numIntegrityErrors > 0 {
+		// there were errors, validation failed
+		return false
+	}
 	fmt.Println("")
-	fmt.Println("Integrity check for symlinks files complete.")
+	fmt.Println("Integrity check for symlinks complete.")
+	return true
 }
 
 // check the on-disk integrity of all files
-func (st *State) CheckFileIntegrity() {
-	st.checkAllRegularFileIntegrity()
-	st.checkAllSymlinkIntegrity()
+// return false if there is an integrity problem.
+func (st *State) CheckFileIntegrity() bool {
+	// regular files
+	if !st.checkAllRegularFileIntegrity() {
+		return false
+	}
+
+	// symlinks
+	if !st.checkAllSymlinkIntegrity() {
+		return false
+	}
+
+	return true
 }
