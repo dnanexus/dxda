@@ -112,7 +112,7 @@ Fields (all fields are strings unless otherwise specified)
 
 It is up to the implementation to decide whether or not `bytes_fetched` is updated in a more coarse- vs. fine-grained fashion.  For example, `bytes_fetched` can be updated only when the part download is complete. In this case, its values will only be `0` or the value of `size`.
 
-It is possible to only specify the first three fields: `file_id`, `project`, and `name`. The rest of the fields will be retrived from the platform in an efficient manner, including the parts. Files that are archived or not closed will cannot be downloaded, and are considered errors.
+The manifest includes four fields for each file: `file_id`, `project`, `name`, and `parts`. If all four are specified, the file is assumed to be live and closed, making it available for download. If the `parts` field is omitted, the file will be described on the platform. Bulk describes are used to do this efficiently for many files in batch. Files that are archived or not closed cannot be downloaded, and will trigger an error.
 
 It is possible to download DNAx symbolic links, which do not have parts. The required fields for symbolic links are `file_id`, `project`, and `name`. Note that a symbolic link has a global MD5 checksum, which is checked at the end of the download.
 
