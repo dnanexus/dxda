@@ -4,8 +4,8 @@ CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 echo "current dir=$CRNT_DIR"
 DXDA_ROOT=$CRNT_DIR/../..
 
-dxda=$GOPATH/bin/dxda
 manifest=$CRNT_DIR/manifest_symlinks.json.bz2
+dxda=$GOPATH/bin/dxda
 
 # make sure we have the dx-download-agent executable in hand
 go build -o $dxda $DXDA_ROOT/cmd/dx-download-agent/dx-download-agent.go

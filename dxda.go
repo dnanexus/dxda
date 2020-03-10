@@ -27,6 +27,10 @@ import (
 )
 
 const (
+	// Range for the number of threads we want to use
+	minNumThreads = 2
+	maxNumThreads = 32
+
 	numRetries = 10
 	numRetriesChecksumMismatch = 3
 	secondsInYear int = 60 * 60 * 24 * 365
@@ -130,12 +134,49 @@ type State struct {
 // TODO: Create automatic API wrappers for the dx toolkit
 // e.g. via: https://github.com/dnanexus/dx-toolkit/tree/master/src/api_wrappers
 
+// The user didn't specify how many threads to use, so we can
+// figure out the optimal number on our own.
+//
+// Constraints:
+// 1. Don't use more than twice the number of cores
+// 2. Leave at least 1GiB of RAM for the machine
+func calcNumThreads() int {
+	numCPUs := runtime.NumCPU()
+	hwMemoryBytes := memorySizeBytes()
+
+	fmt.Printf("number of machine cores: %d\n", numCPUs)
+	fmt.Printf("memory size: %d GiB\n", hwMemoryBytes/GiB)
+
+	numThreads := MinInt(2 * numCPUs, maxNumThreads)
+	memoryCostPerThread := 3 * int64(maxChunkSize)
+
+	for numThreads > minNumThreads {
+		projectedMemoryUseBytes := memoryCostPerThread * int64(numThreads)
+		if projectedMemoryUseBytes < (hwMemoryBytes - GiB) {
+			return numThreads
+		}
+		numThreads -= 2
+	}
+	return minNumThreads
+}
+
 // Initialize the state
-func NewDxDa(dxEnv DXEnvironment, fname string, opts Opts) *State {
+func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	db.SetMaxOpenConns(1)
+
+	// if the number of threads isn't set we
+	// need to calculate it and modify the options
+	opts := optsRaw
+	if opts.NumThreads == 0 {
+		opts.NumThreads = calcNumThreads()
+	}
+
+	// Limit the number of threads
+	runtime.GOMAXPROCS(opts.NumThreads)
+	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 
 	return &State {
 		dxEnv : dxEnv,
@@ -648,10 +689,6 @@ func (st *State) DownloadManifestDB(fname string) {
 		log.Printf("DownloadManifestDB %s\n", fname)
 	}
 	st.timeOfLastError = time.Now().Second()
-
-	// Limit the number of threads
-	runtime.GOMAXPROCS(st.opts.NumThreads)
-	PrintLogAndOut("Downloading files using %d threads\n", st.opts.NumThreads)
 
 	// build a job-channel that will hold all the parts. If we make it too small,
 	// we will block before creating the worker threads.

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -175,4 +176,14 @@ func PrintLogAndOut(a string, args ...interface{}) {
 
 	fmt.Print(msg)
 	log.Print(msg)
+}
+
+func memorySizeBytes() int64 {
+	si := &syscall.Sysinfo_t{}
+	err := syscall.Sysinfo(si)
+	check(err)
+	if si.Totalram < 0 {
+		panic("total RAM is negative")
+	}
+	return int64(si.Totalram)
 }

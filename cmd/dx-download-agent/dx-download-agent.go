@@ -14,7 +14,7 @@ import (
 
 // download subcommand
 type downloadCmd struct {
-	maxThreads int
+	numThreads int
 	verbose bool
 }
 
@@ -26,7 +26,8 @@ func (*downloadCmd) Usage() string {
 	return downloadUsage
 }
 func (p *downloadCmd) SetFlags(f *flag.FlagSet) {
-	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when downloading files")
+	f.IntVar(&p.numThreads, "num_threads", 0, "Number of threads to use when downloading files. By default (or if zero), this number is chosen according to machine memory and CPU constraints.")
+	f.IntVar(&p.numThreads, "max_threads", 0, "An alias for num_threads")
 	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
@@ -59,7 +60,7 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	dxda.PrintLogAndOut("Obtained token using %s\n", method)
 
 	var opts dxda.Opts
-	opts.NumThreads = p.maxThreads
+	opts.NumThreads = p.numThreads
 	opts.Verbose = p.verbose
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
@@ -90,11 +91,8 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	return subcommands.ExitSuccess
 }
 
-// report on progress
 type progressCmd struct {
-	maxThreads int
 }
-
 func (*progressCmd) Name() string     { return "progress" }
 func (*progressCmd) Synopsis() string { return "show current download progress" }
 
@@ -120,8 +118,6 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	}
 
 	var opts dxda.Opts
-	opts.NumThreads = p.maxThreads
-
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
 
@@ -132,7 +128,6 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 // inspect the files, and see that there are no checksum errors
 type inspectCmd struct {
-	maxThreads int
 	verbose bool
 }
 
@@ -146,7 +141,6 @@ func (*inspectCmd) Usage() string {
 	return downloadUsage
 }
 func (p *inspectCmd) SetFlags(f *flag.FlagSet) {
-	f.IntVar(&p.maxThreads, "max_threads", 8, "Maximum # of threads to use when inspecting files")
 	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
@@ -165,7 +159,6 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	}
 
 	var opts dxda.Opts
-	opts.NumThreads = p.maxThreads
 	opts.Verbose = p.verbose
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
@@ -180,7 +173,6 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 
 // get the version
 type versionCmd struct {
-  capitalize bool
 }
 
 func (*versionCmd) Name() string     { return "version" }
