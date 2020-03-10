@@ -16,7 +16,7 @@ $dxda inspect $manifest
 
 # intentionally corrupt one file, this should be detected when
 # running inspect
-echo "hello world" > mini/bugs/argument_list_too_long.wdl
+echo "hello world" > correctness/dxWDL_source_code/test/bugs/argument_list_too_long.wdl
 
 set +e
 $dxda inspect $manifest

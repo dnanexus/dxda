@@ -546,7 +546,7 @@ func (st *State) downloadSymlinkPart(
 // Download part of a symlink
 func (st *State) downloadRegPart(
 	httpClient *retryablehttp.Client,
-	p DBPartReglink,
+	p DBPartRegular,
 	wg *sync.WaitGroup,
 	u DXDownloadURL) error {
 
@@ -831,13 +831,16 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 	check(err)
 	defer localf.Close()
 
-	// limit the file-descriptor to read only this part, and not
-	// continue until the end of the file
-	ReaderFrom(localf, p.Offset)
-	limitedReader := io.LimitReader(localf, p.Size)
+	// limit the file-descriptor to read only this part. Start at the beginning
+	// of the part, and read [part-size] bytes.
+	if _, err := localf.Seek(p.Offset, 0); err != nil {
+		integrityMsgs <- fmt.Sprintf("Error seeking %s to %d %s", fname, p.Offset, err.Error())
+		return
+	}
+	partReader := io.LimitReader(localf, int64(p.Size))
 
 	hasher := md5.New()
-	if _, err := io.Copy(hasher, limitedReader); err != nil {
+	if _, err := io.Copy(hasher, partReader); err != nil {
 		st.resetDBPart(p)
 		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
 		return

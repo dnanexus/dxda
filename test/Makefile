@@ -4,11 +4,11 @@ all : dxfuse copy_all manifest
 	dx build dxda_correctness -f --destination dxfuse_test_data:/applets/dxda_correctness
 
 dxfuse :
-	go build -o dx-download-agent ${DXDA_ROOT}/cmd/dx-download-agent/dx-download-agent.go
+	go build -o /go/bin/dx-download-agent ${DXDA_ROOT}/cmd/dx-download-agent/dx-download-agent.go
 
 copy_all : dxfuse
 	mkdir -p dxda_correctness/resources/usr/bin
-	cp -f dx-download-agent dxda_correctness/resources/usr/bin/
+	cp -f /go/bin/dx-download-agent dxda_correctness/resources/usr/bin/
 
 manifest:
 	dx select dxfuse_test_data
