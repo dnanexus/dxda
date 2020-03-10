@@ -5,10 +5,14 @@ echo "current dir=$CRNT_DIR"
 DXDA_ROOT=$CRNT_DIR/../..
 
 dxda=$GOPATH/bin/dxda
-manifest=$CRNT_DIR/manifest_regular.json.bz2
 
 # make sure we have the dx-download-agent executable in hand
 go build -o $dxda $DXDA_ROOT/cmd/dx-download-agent/dx-download-agent.go
+
+echo "creating manifest from the dxfuse_test_data:/correctness directory"
+manifest=$CRNT_DIR/manifest.json.bz2
+rm -f $manifest || true
+python ${DXDA_ROOT}/scripts/create_manifest.py -r /correctness
 
 # download and check
 $dxda download $manifest
@@ -40,3 +44,9 @@ if [[ $rc != 0 ]]; then
 fi
 
 echo "Regular files test was successful"
+
+
+echo "Checking large files"
+manifest=$CRNT_DIR/manifest_large_files.json.bz2
+$dxda download $manifest
+$dxda inspect $manifest

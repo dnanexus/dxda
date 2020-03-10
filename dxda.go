@@ -1,14 +1,11 @@
 package dxda
 
 // Some inspiration + code snippets taken from https://github.com/dnanexus/precision-fda/blob/master/go/pfda.go
-
-// TODO: Some more code cleanup + consistency with best Go practices, add more unit tests, setup deeper integration tests, add build notes
-
-// Questions
-//  * Why are continuous reports commented out?
-//  * What is the difference between block_size and size?
+//
+// TODO: add more unit tests, setup deeper integration tests
 //
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"database/sql"
@@ -31,6 +28,7 @@ import (
 
 const (
 	numRetries = 10
+	numRetriesChecksumMismatch = 3
 	secondsInYear int = 60 * 60 * 24 * 365
 
 	// Constraints:
@@ -543,12 +541,13 @@ func (st *State) downloadSymlinkPart(
 	return nil
 }
 
-// Download part of a symlink
-func (st *State) downloadRegPart(
+// Download part of a file and verify its checksum in memory
+//
+func (st *State) downloadRegPartCheckSum(
 	httpClient *retryablehttp.Client,
 	p DBPartRegular,
 	wg *sync.WaitGroup,
-	u DXDownloadURL) error {
+	u DXDownloadURL) (bool, error) {
 
 	if st.opts.Verbose {
 		log.Printf("downloadRegPart %v %v\n", p, u)
@@ -559,24 +558,64 @@ func (st *State) downloadRegPart(
 	check(err)
 	defer localf.Close()
 
-	//
-	headers := make(map[string]string)
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", p.offset(), p.offset() + int64(p.size()) - 1)
-	for k, v := range u.Headers {
-		headers[k] = v
+	// compute the checksum as we go
+	hasher := md5.New()
+
+	// loop through the part, reading in chunk pieces
+	endPart := p.Offset + int64(p.Size) - 1
+	for ofs := p.Offset; ofs <= endPart; ofs += maxChunkSize {
+		chunkEnd := MinInt64(ofs + maxChunkSize - 1, endPart)
+		chunkSize := int(chunkEnd - ofs + 1)
+
+		headers := make(map[string]string)
+		headers["Range"] = fmt.Sprintf("bytes=%d-%d", ofs, chunkEnd)
+		for k, v := range u.Headers {
+			headers[k] = v
+		}
+
+		body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize)
+		check(err)
+		_, err = localf.WriteAt(body, ofs)
+		check(err)
+
+		// update the checksum
+		_, err = io.Copy(hasher, bytes.NewReader(body))
+		check(err)
 	}
 
-	body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size)
-	check(err)
-	_, err = localf.WriteAt(body, p.offset())
-	check(err)
+	// verify the checksum
+	diskSum := hex.EncodeToString(hasher.Sum(nil))
+	if diskSum != p.MD5 {
+		return false, nil
+	}
 
 	st.updateDBPart(p)
 	progressStr := st.DownloadProgressOneTime(60*1000*1000*1000)
 
 	st.printToStdout(progressStr)
 	log.Printf(progressStr + "\n")
-	return nil
+	return true, nil
+}
+
+func (st *State) downloadRegPart(
+	httpClient *retryablehttp.Client,
+	p DBPartRegular,
+	wg *sync.WaitGroup,
+	u DXDownloadURL) error {
+
+	for i := 0 ; i < numRetriesChecksumMismatch; i++ {
+		ok, err := st.downloadRegPartCheckSum(httpClient, p, wg, u)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", p.PartId)
+	}
+
+	return fmt.Errorf("MD5 checksum mismatch for part %d url=%s. Gave up after %d attempts",
+		p.PartId, u.URL, numRetriesChecksumMismatch)
 }
 
 func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
