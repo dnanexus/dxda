@@ -47,6 +47,12 @@ echo "Regular files test was successful"
 
 
 echo "Checking large files"
-manifest=$CRNT_DIR/manifest_large_files.json.bz2
+rm -f $manifest || true
+python ${DXDA_ROOT}/scripts/create_manifest.py -r /large_files
+
 $dxda download $manifest
 $dxda inspect $manifest
+
+echo "cleanup"
+rm -rf large_files correctness
+rm -f *.db *.log *.bz2
