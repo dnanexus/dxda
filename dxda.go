@@ -203,7 +203,7 @@ func (st *State) printToStdout(a string, args ...interface{}) {
 		fmt.Printf("%s\r", line)
 	} else {
 		// We are on a dx-job, and we want to see the history of printouts
-		fmt.Printf("%s\r", line)
+		fmt.Print(line)
 	}
 }
 
@@ -978,11 +978,10 @@ func (st *State) validateSymlinkChecksum(f DXFileSymlink, integrityMsgs chan str
 		}
 	} else {
 		msg := fmt.Sprintf(`
-Identified md5sum mismatch for symlink {
-    name : %s,
-    symlink : %s,
-    checksum : %s
-}
+Identified md5sum mismatch for symbolic link
+    name      %s
+    symlink   %s
+    checksum  %s
 Please re-issue the download command to resolve`,
 			f.Name, f.Url, f.MD5)
 		integrityMsgs <- msg

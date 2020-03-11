@@ -87,12 +87,11 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch_and_wait(project, applet, instance_types):
+def launch_and_wait(project, applet, manifest, instance_types):
     # Run the workflows
     jobs=[]
     print("Launching correctness applet")
 
-    manifest = lookup_file("manifest.json.bz2", project, "/")
     inputs = {
         "manifest" : dxpy.dxlink(manifest) #{"$dnanexus_link": manifest.get_id()}
     }
@@ -118,6 +117,13 @@ def extract_results(jobs):
 
 def run_correctness(dx_proj, instance_types):
     applet = lookup_applet("dxda_correctness", dx_proj, "/applets")
+    manifest = lookup_file("manifest_correctness.json.bz2", project, "/")
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types)
+    extract_results(jobs)
+
+def run_benchmark(dx_proj, instance_types):
+    applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
+    manifest = lookup_file("manifest_benchmark.json.bz2", project, "/")
     jobs = launch_and_wait(dx_proj, applet, instance_types)
     extract_results(jobs)
 
@@ -125,10 +131,12 @@ def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxda")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
+    argparser.add_argument("--test", help="which testing suite to run [bench, correct]")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
+    argparser.add_argument("--verbose", help="run the tests in verbose mode",
+                           action='store_true', default=False)
     args = argparser.parse_args()
-
     dx_proj = get_project(args.project)
 
     # figure out which region we are operating in
@@ -147,7 +155,16 @@ def main():
         print("Unknown size value {}".format(args.scale))
         exit(1)
 
-    run_correctness(dx_proj, instance_types)
+    if args.test is None:
+        print("Test not specified")
+        exit(1)
+    if args.test.startswith("bench"):
+        run_correctness(dx_proj, instance_types)
+    elif args.test.startswith("correct"):
+        run_benchmark(dx_proj, instance_types)
+    else:
+        print("Unknown test {}".format(args.test))
+        exit(1)
 
 if __name__ == '__main__':
     main()
