@@ -23,5 +23,5 @@ main() {
     end=`date +%s`
     runtime=$((end-start))
 
-    dx-jobutil-add-output --class=string runtime $runtime
+    dx-jobutil-add-output --class=int runtime $runtime
 }

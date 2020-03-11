@@ -203,7 +203,7 @@ func (st *State) printToStdout(a string, args ...interface{}) {
 		fmt.Printf("%s\r", line)
 	} else {
 		// We are on a dx-job, and we want to see the history of printouts
-		fmt.Print(line)
+		fmt.Printf("%s\r", line)
 	}
 }
 

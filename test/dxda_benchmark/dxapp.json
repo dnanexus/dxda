@@ -16,9 +16,8 @@
   ],
   "outputSpec": [
     {
-      "name": "result",
-      "class": "string",
-      "optional": true
+      "name": "runtime",
+      "class": "int"
     }
   ],
   "runSpec": {
