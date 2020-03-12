@@ -4,8 +4,11 @@ CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 echo "current dir=$CRNT_DIR"
 DXDA_ROOT=$CRNT_DIR/../..
 
+src_manifest=$DXDA_ROOT/test_files/symlinks.manifest.json.bz2
+manifest=symlinks.manifest.json.bz2
 dxda=$GOPATH/bin/dxda
-manifest=$CRNT_DIR/manifest_symlinks.json.bz2
+
+cp -f $src_manifest $manifest
 
 # make sure we have the dx-download-agent executable in hand
 go build -o $dxda $DXDA_ROOT/cmd/dx-download-agent/dx-download-agent.go
@@ -40,3 +43,7 @@ if [[ $rc != 0 ]]; then
 fi
 
 echo "Symlink test was successful"
+
+echo "cleanup"
+rm -rf symlinks
+rm -f *.db *.log *.bz2

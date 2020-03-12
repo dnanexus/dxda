@@ -1,5 +1,2 @@
 .vscode/settings.json
 __pycache__
-*.bz2
-dx-download-agent
-manifest.json.bz2

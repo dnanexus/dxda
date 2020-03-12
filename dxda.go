@@ -1,14 +1,11 @@
 package dxda
 
 // Some inspiration + code snippets taken from https://github.com/dnanexus/precision-fda/blob/master/go/pfda.go
-
-// TODO: Some more code cleanup + consistency with best Go practices, add more unit tests, setup deeper integration tests, add build notes
-
-// Questions
-//  * Why are continuous reports commented out?
-//  * What is the difference between block_size and size?
+//
+// TODO: add more unit tests, setup deeper integration tests
 //
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"database/sql"
@@ -30,14 +27,18 @@ import (
 )
 
 const (
-	numRetries = 10
-	secondsInYear int = 60 * 60 * 24 * 365
+	// Range for the number of threads we want to use
+	minNumThreads = 2
+	maxNumThreads = 32
 
-	// Constraints:
-	// 1) The part should be large enough to optimize the http(s) network stack
-	// 2) The part should be small enough to be able to take it in one request,
-	//    causing minimal retries.
-	symlinkPartSize = 16 * MiB
+	// handling the case of receiving the less data than we
+	// asked for
+	badLengthTimeout = 5  // seconds
+	badLengthNumRetries = 3
+
+	numRetries = 10
+	numRetriesChecksumMismatch = 3
+	secondsInYear int = 60 * 60 * 24 * 365
 )
 
 // DXDownloadURL ...
@@ -124,6 +125,7 @@ type State struct {
 	ds              *DownloadStatus
 	urls             map[string]DXDownloadURL
 	timeOfLastError  int
+	maxChunkSize     int64
 }
 
 //-----------------------------------------------------------------
@@ -132,12 +134,62 @@ type State struct {
 // TODO: Create automatic API wrappers for the dx toolkit
 // e.g. via: https://github.com/dnanexus/dx-toolkit/tree/master/src/api_wrappers
 
+// The user didn't specify how many threads to use, so we can
+// figure out the optimal number on our own.
+//
+// Constraints:
+// 1. Don't use more than twice the number of cores
+// 2. Leave at least 1GiB of RAM for the machine
+func calcNumThreads(maxChunkSize int64) int {
+	numCPUs := runtime.NumCPU()
+	hwMemoryBytes := memorySizeBytes()
+
+	fmt.Printf("number of machine cores: %d\n", numCPUs)
+	fmt.Printf("memory size: %d GiB\n", hwMemoryBytes/GiB)
+
+	numThreads := MinInt(2 * numCPUs, maxNumThreads)
+	memoryCostPerThread := 3 * int64(maxChunkSize)
+
+	for numThreads > minNumThreads {
+		projectedMemoryUseBytes := memoryCostPerThread * int64(numThreads)
+		if projectedMemoryUseBytes < (hwMemoryBytes - GiB) {
+			return numThreads
+		}
+		numThreads -= 2
+	}
+	return minNumThreads
+}
+
 // Initialize the state
-func NewDxDa(dxEnv DXEnvironment, fname string, opts Opts) *State {
+func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	db, err := sql.Open("sqlite3", statsFname)
 	check(err)
 	db.SetMaxOpenConns(1)
+
+	// Constraints:
+	// 1) The chunk should be large enough to optimize the http(s) network stack
+	// 2) The chunk should be small enough to be able to take it in one request,
+	//    causing minimal retries.
+	maxChunkSize := int64(0)
+	if dxEnv.DxJobId == "" {
+		// a remote machine, with a lower bandwith network connection
+		maxChunkSize = 16 * MiB
+	} else {
+		// A cloud worker with good bandwitdh
+		maxChunkSize = 64 * MiB
+	}
+
+	// if the number of threads isn't set we
+	// need to calculate it and modify the options
+	opts := optsRaw
+	if opts.NumThreads == 0 {
+		opts.NumThreads = calcNumThreads(maxChunkSize)
+	}
+
+	// Limit the number of threads
+	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
+	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
 
 	return &State {
 		dxEnv : dxEnv,
@@ -147,33 +199,13 @@ func NewDxDa(dxEnv DXEnvironment, fname string, opts Opts) *State {
 		ds : nil,
 		urls : make(map[string]DXDownloadURL),
 		timeOfLastError : 0,
+		maxChunkSize : maxChunkSize,
 	}
 }
 
 func (st *State) Close() {
 	st.db.Close()
 }
-
-func (st *State) printToStdout(a string, args ...interface{}) {
-	line := fmt.Sprintf(a, args...)
-
-	if st.dxEnv.DxJobId == "" {
-		// running on a console, erase the previous line
-		// TODO: Get rid of this temporary space-padding fix for carriage returns
-		fmt.Printf("                                                                      \r")
-		fmt.Printf("%s\r", line)
-	} else {
-		// We are on a dx-job, and we want to see the history of printouts
-		fmt.Printf("%s\r", line)
-	}
-}
-
-func (st *State) md5str(body []byte) string {
-	hasher := md5.New()
-	hasher.Write(body)
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
 
 // Probably a better way to do this :)
 func (st *State) queryDBIntegerResult(query string) int64 {
@@ -222,8 +254,9 @@ func (st *State) CheckDiskSpace() error {
 	// Calculate total disk space required. To get an accurate number,
 	// query the database, and sum the space for missing pieces.
 	//
-	totalSizeBytes := st.queryDBIntegerResult(
-		"SELECT SUM(size) FROM manifest_regular_stats WHERE bytes_fetched != size")
+	totalSizeBytes :=
+		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats WHERE bytes_fetched != size") +
+		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats WHERE bytes_fetched != size")
 
 	// Find how much local disk space is available
 	var stat syscall.Statfs_t
@@ -243,10 +276,9 @@ func (st *State) CheckDiskSpace() error {
 			diskSpaceString(totalSizeBytes))
 		return errors.New(desc)
 	}
-	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s,  #free-inodes=%d\n",
+	diskSpaceStr := fmt.Sprintf("Required disk space = %s, available = %s\n",
 		diskSpaceString(totalSizeBytes),
-		diskSpaceString(availableBytes),
-		stat.Ffree)
+		diskSpaceString(availableBytes))
 	PrintLogAndOut(diskSpaceStr)
 	return nil
 }
@@ -272,7 +304,7 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 
 	for offset < slnk.Size {
 		// make sure we don't go over the file size
-		endOfs := MinInt64(offset + symlinkPartSize, slnk.Size)
+		endOfs := MinInt64(offset + st.maxChunkSize, slnk.Size)
 		partLen := endOfs - offset
 
 		if partLen <= 0 {
@@ -405,25 +437,39 @@ func (st *State) prepareFilesForDownload(m Manifest) {
 // InitDownloadStatus ...
 func (st *State) InitDownloadStatus() {
 	// total amounts to download, calculated once
-	numParts := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats")
-	numBytes := st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats")
+	numParts :=
+		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats") +
+		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats")
+	numBytes :=
+		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats") +
+		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats")
+
+	progressIntervalSec := 0
+	if st.dxEnv.DxJobId == "" {
+		// interactive use, we want to see frequent updates
+		progressIntervalSec = 5
+	} else {
+		// Non interactive use: we don't want to fill the logs with
+		// too many messages
+		progressIntervalSec = 15
+	}
 
 	st.ds = &DownloadStatus{
 		NumParts : numParts,
 		NumBytes : numBytes,
 		NumPartsComplete : 0,
 		NumBytesComplete : 0,
-		ProgressInterval : time.Duration(5) * time.Second,
+		ProgressInterval : time.Duration(progressIntervalSec) * time.Second,
 		MaxWindowSize : int64(2 * 60 * 1000 * 1000 * 1000),
 	}
 
 	if st.opts.Verbose {
-		log.Printf("init dowload status %v\n", st.ds)
+		log.Printf("init download status %v\n", st.ds)
 	}
 }
 
 // Calculate bandwidth in MB/sec. Query the database, and find
-// all recently completed downloaded chunks.
+// all recently completed downloaded parts.
 func (st *State) calcBandwidth(timeWindowNanoSec int64) float64 {
 	if timeWindowNanoSec < 1000 {
 		// sanity check; if the interval is very short, just return zero.
@@ -434,10 +480,17 @@ func (st *State) calcBandwidth(timeWindowNanoSec int64) float64 {
 	now := time.Now().UnixNano()
 	lowerBound := now - timeWindowNanoSec
 
-	query := fmt.Sprintf(
+	queryReg := fmt.Sprintf(
 		"SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE download_done_time > %d",
 		lowerBound)
-	bytesDownloadedInTimeWindow := st.queryDBIntegerResult(query)
+	regBytesDownloadedInTimeWindow := st.queryDBIntegerResult(queryReg)
+
+	querySlnk := fmt.Sprintf(
+		"SELECT SUM(bytes_fetched) FROM manifest_symlink_stats WHERE download_done_time > %d",
+		lowerBound)
+	slnkBytesDownloadedInTimeWindow := st.queryDBIntegerResult(querySlnk)
+
+	bytesDownloadedInTimeWindow := regBytesDownloadedInTimeWindow + slnkBytesDownloadedInTimeWindow
 
 	// convert to megabytes downloaded divided by seconds
 	mbDownloaded := float64(bytesDownloadedInTimeWindow) / float64(1024*1024)
@@ -453,10 +506,12 @@ func bytes2MiB(bytes int64) int64 {
 // Report on progress so far
 func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 	// query the current progress
-	st.ds.NumBytesComplete = st.queryDBIntegerResult(
-		"SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE bytes_fetched = size")
-	st.ds.NumPartsComplete = st.queryDBIntegerResult(
-		"SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched = size")
+	st.ds.NumBytesComplete =
+		st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE bytes_fetched = size") +
+		st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_symlink_stats WHERE bytes_fetched = size")
+	st.ds.NumPartsComplete =
+		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched = size") +
+		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched = size")
 
 	// calculate bandwitdh
 	bandwidthMBSec := st.calcBandwidth(timeWindowNanoSec)
@@ -468,6 +523,39 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 		timeWindowNanoSec/1e9)
 
 	return desc
+}
+
+// A loop that reports on download progress periodically.
+func (st *State) downloadProgressContinuous() {
+	// Start time of the measurements, in nano seconds
+	startTime := time.Now()
+
+	for st.ds.NumPartsComplete < st.ds.NumParts {
+		// Sleep for a number of seconds, so as to not flood the screen
+		// with messages. This also substantially limits the number
+		// of database queries.
+		time.Sleep(st.ds.ProgressInterval)
+
+		// If we just started the measurements, we have a short
+		// history to examine. Limit the window size accordingly.
+		now := time.Now()
+		deltaNanoSec := now.UnixNano() - startTime.UnixNano()
+		if deltaNanoSec > st.ds.MaxWindowSize {
+			deltaNanoSec = st.ds.MaxWindowSize
+		}
+		desc := st.DownloadProgressOneTime(deltaNanoSec)
+
+		if st.dxEnv.DxJobId == "" {
+			// running on a console, erase the previous line
+			// TODO: Get rid of this temporary space-padding fix for carriage returns
+			fmt.Printf("                                                                      \r")
+			fmt.Printf("%s\r", desc)
+		} else {
+			// We are on a dx-job, and we want to see the history of printouts
+			// Note: the "\r" character causes problems in job logs, so do not use it.
+			fmt.Printf("%s\n", desc)
+		}
+	}
 }
 
 // create a download url if one doesn't exist
@@ -508,38 +596,108 @@ func (st *State) createURL(p DBPartRegular, httpClient *retryablehttp.Client) DX
 	return u
 }
 
-// Download part of a file
-func (st *State) downloadDBPart(
+// Download part of a symlink
+func (st *State) downloadSymlinkPart(
 	httpClient *retryablehttp.Client,
-	p DBPart,
+	p DBPartSymlink,
 	wg *sync.WaitGroup,
 	u DXDownloadURL) error {
 
 	if st.opts.Verbose {
-		log.Printf("downloadDBPart %v %v\n", p, u)
+		log.Printf("downloadSymlinkPart %v %v\n", p, u)
 	}
 
 	fname := fmt.Sprintf(".%s/%s", p.folder(), p.fileName())
 	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
 	check(err)
+	defer localf.Close()
+
 	headers := make(map[string]string)
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", p.offset(), p.offset() + int64(p.size()) - 1)
 
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
-	body, err := st.dxHttpRequestChecksum(httpClient, "GET", u.URL, headers, []byte("{}"), p)
+	body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size)
 	check(err)
 	_, err = localf.WriteAt(body, p.offset())
 	check(err)
-	localf.Close()
 
 	st.updateDBPart(p)
-	progressStr := st.DownloadProgressOneTime(60*1000*1000*1000)
-
-	st.printToStdout(progressStr)
-	log.Printf(progressStr + "\n")
 	return nil
+}
+
+// Download part of a file and verify its checksum in memory
+//
+func (st *State) downloadRegPartCheckSum(
+	httpClient *retryablehttp.Client,
+	p DBPartRegular,
+	wg *sync.WaitGroup,
+	u DXDownloadURL) (bool, error) {
+
+	if st.opts.Verbose {
+		log.Printf("downloadRegPart %v %v\n", p, u)
+	}
+
+	fname := fmt.Sprintf(".%s/%s", p.folder(), p.fileName())
+	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
+	check(err)
+	defer localf.Close()
+
+	// compute the checksum as we go
+	hasher := md5.New()
+
+	// loop through the part, reading in chunk pieces
+	endPart := p.Offset + int64(p.Size) - 1
+	for ofs := p.Offset; ofs <= endPart; ofs += st.maxChunkSize {
+		chunkEnd := MinInt64(ofs + st.maxChunkSize - 1, endPart)
+		chunkSize := int(chunkEnd - ofs + 1)
+
+		headers := make(map[string]string)
+		headers["Range"] = fmt.Sprintf("bytes=%d-%d", ofs, chunkEnd)
+		for k, v := range u.Headers {
+			headers[k] = v
+		}
+
+		body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize)
+		check(err)
+		_, err = localf.WriteAt(body, ofs)
+		check(err)
+
+		// update the checksum
+		_, err = io.Copy(hasher, bytes.NewReader(body))
+		check(err)
+	}
+
+	// verify the checksum
+	diskSum := hex.EncodeToString(hasher.Sum(nil))
+	if diskSum != p.MD5 {
+		return false, nil
+	}
+
+	st.updateDBPart(p)
+	return true, nil
+}
+
+func (st *State) downloadRegPart(
+	httpClient *retryablehttp.Client,
+	p DBPartRegular,
+	wg *sync.WaitGroup,
+	u DXDownloadURL) error {
+
+	for i := 0 ; i < numRetriesChecksumMismatch; i++ {
+		ok, err := st.downloadRegPartCheckSum(httpClient, p, wg, u)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", p.PartId)
+	}
+
+	return fmt.Errorf("MD5 checksum mismatch for part %d url=%s. Gave up after %d attempts",
+		p.PartId, u.URL, numRetriesChecksumMismatch)
 }
 
 func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
@@ -552,7 +710,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
 			u := st.createURL(p, httpClient)
-			st.downloadDBPart(httpClient, j.part, j.wg, u)
+			st.downloadRegPart(httpClient, p, j.wg, u)
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
@@ -560,7 +718,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 				URL : pLnk.Url,
 				Headers : make(map[string]string, 0),
 			}
-			st.downloadDBPart(httpClient, j.part, j.wg, u)
+			st.downloadSymlinkPart(httpClient, pLnk, j.wg, u)
 		}
 	}
 	wg.Done()
@@ -572,10 +730,6 @@ func (st *State) DownloadManifestDB(fname string) {
 		log.Printf("DownloadManifestDB %s\n", fname)
 	}
 	st.timeOfLastError = time.Now().Second()
-
-	// Limit the number of threads
-	runtime.GOMAXPROCS(st.opts.NumThreads)
-	PrintLogAndOut("Downloading files using %d threads\n", st.opts.NumThreads)
 
 	// build a job-channel that will hold all the parts. If we make it too small,
 	// we will block before creating the worker threads.
@@ -637,6 +791,7 @@ func (st *State) DownloadManifestDB(fname string) {
 	}
 
 	st.InitDownloadStatus()
+	go st.downloadProgressContinuous()
 
 	// wait for all the jobs to be completed
 	wg.Wait()
@@ -740,14 +895,13 @@ func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 
 // Add retries around the core http-request method
 //
-func (st *State) dxHttpRequestChecksum(
+func (st *State) dxHttpRequestData(
 	httpClient *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
 	data []byte,
-	p DBPart) (body []byte, err error) {
-	tCnt := 0
+	dataLen int) (body []byte, err error) {
 
 	// Safety procedure to force timeout to prevent hanging
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -756,7 +910,7 @@ func (st *State) dxHttpRequestChecksum(
 	})
 	defer timer.Stop()
 
-	for tCnt < 3 {
+	for i := 0; i < badLengthNumRetries; i ++ {
 		body, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
 		if err != nil {
 			return nil, err
@@ -764,39 +918,22 @@ func (st *State) dxHttpRequestChecksum(
 
 		// check that the length is correct
 		recvLen := len(body)
-		if recvLen != p.size() {
+		if recvLen != dataLen {
 			// Note: it would be preferable to collect partial results and concatenate them.
-			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, p.size())
-			tCnt++
+			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, dataLen)
+			time.Sleep(time.Duration(badLengthTimeout) * time.Second)
 			continue
 		}
-
-		var pReg DBPartRegular
-		switch p.(type) {
-		case DBPartSymlink:
-			// A symbolic link, there is no checksum to verify. We are done
-			return body, nil
-		case DBPartRegular:
-			// A regular file, we can verify the checksum, and retry if there is a problem.
-			pReg = p.(DBPartRegular)
-		}
-
-		recvChksum := st.md5str(body)
-		if recvChksum == pReg.MD5 {
-			// good checksum
-			return body, nil
-		}
-
-		// bad checksum, we need to retry
-		log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", pReg.PartId)
-		tCnt++
+		return body, nil
 	}
 
-
-	err = fmt.Errorf("%s request to '%s' failed after %d attempts",
-		requestType, url, tCnt)
+	err = fmt.Errorf("%s request to %s failed after %d attempts",
+		requestType, url, badLengthNumRetries)
 	return nil, err
 }
+
+// -----------------------------------------
+// inspect: validation of downloaded parts
 
 // check that a database part has the correct md5 checksum
 func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) {
@@ -814,23 +951,29 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 	check(err)
 	defer localf.Close()
 
-	body := make([]byte, p.Size)
-	_, err = localf.ReadAt(body, p.Offset)
-	if err != nil {
+	// limit the file-descriptor to read only this part. Start at the beginning
+	// of the part, and read [part-size] bytes.
+	if _, err := localf.Seek(p.Offset, 0); err != nil {
+		integrityMsgs <- fmt.Sprintf("Error seeking %s to %d %s", fname, p.Offset, err.Error())
+		return
+	}
+	partReader := io.LimitReader(localf, int64(p.Size))
+
+	hasher := md5.New()
+	if _, err := io.Copy(hasher, partReader); err != nil {
 		st.resetDBPart(p)
 		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
 		return
 	}
+	diskSum := hex.EncodeToString(hasher.Sum(nil))
 
-	if st.md5str(body) != p.MD5 {
+	if diskSum != p.MD5 {
 		st.resetDBPart(p)
 		msg := fmt.Sprintf(
 			"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
 			p.FileName, p.PartId)
 		integrityMsgs <- msg
 	}
-
-	// checksum is good
 }
 
 func (st *State) filePartIntegrityWorker(id int, jobs <-chan JobInfo, integrityMsgs chan string, wg *sync.WaitGroup) {
@@ -856,7 +999,7 @@ func (st *State) validateSymlinkChecksum(f DXFileSymlink, integrityMsgs chan str
 	}
 
 	if st.opts.Verbose {
-		st.printToStdout("validate symlink %s", f.Name)
+		fmt.Printf("validate symlink %s\n", f.Name)
 	}
 
 	localf, err := os.Open(fname)
@@ -866,22 +1009,23 @@ func (st *State) validateSymlinkChecksum(f DXFileSymlink, integrityMsgs chan str
 	// This is supposed to NOT load the entire file into memory.
 	hasher := md5.New()
 	if _, err := io.Copy(hasher, localf); err != nil {
-		log.Fatal(err)
+		st.resetSymlinkFile(f)
+		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+		return
 	}
 	diskSum := hex.EncodeToString(hasher.Sum(nil))
 
 	if diskSum == f.MD5 {
 		if st.opts.Verbose {
-			fmt.Printf("file %s,symlink %s, has the correct checksum %s\n",
+			fmt.Printf("file %s, symlink %s, has the correct checksum %s\n",
 				f.Name, f.Url, f.MD5)
 		}
 	} else {
 		msg := fmt.Sprintf(`
-Identified md5sum mismatch for symlink {
-    name : %s,
-    symlink : %s,
-    checksum : %s
-}
+Identified md5sum mismatch for symbolic link
+    name      %s
+    symlink   %s
+    checksum  %s
 Please re-issue the download command to resolve`,
 			f.Name, f.Url, f.MD5)
 		integrityMsgs <- msg

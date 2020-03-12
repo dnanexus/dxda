@@ -30,7 +30,7 @@ main() {
     echo "downloading with dx-download-agent"
     mkdir $dxdaTrgDir
     cd $dxdaTrgDir
-    mv ${HOME}/in/manifest/manifest.json.bz2 .
+    mv ${HOME}/in/manifest/*.json.bz2 manifest.json.bz2
     dx-download-agent download manifest.json.bz2
     rm -f manifest*
     cd $HOME

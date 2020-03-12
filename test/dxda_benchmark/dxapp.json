@@ -1,0 +1,37 @@
+{
+  "name": "dxda_benchmark",
+  "summary": "measure dx-download-agent performance",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "verbose",
+      "class": "boolean",
+      "optional": true
+    },
+    {
+      "name": "manifest",
+      "class": "file"
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "runtime",
+      "class": "int"
+    }
+  ],
+  "runSpec": {
+    "interpreter": "bash",
+    "file": "code.sh",
+    "distribution": "Ubuntu",
+    "release": "16.04",
+    "timeoutPolicy" : {
+      "*" : {
+        "hours" : 6
+      }
+    }
+  },
+  "access": {
+    "allProjects": "VIEW"
+  }
+}
