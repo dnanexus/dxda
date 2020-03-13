@@ -29,7 +29,7 @@ import (
 const (
 	// Range for the number of threads we want to use
 	minNumThreads = 2
-	maxNumThreads = 32
+	maxNumThreads = 64
 
 	// handling the case of receiving the less data than we
 	// asked for
@@ -190,6 +190,7 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	// Limit the number of threads
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
+	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
 	return &State {
 		dxEnv : dxEnv,
