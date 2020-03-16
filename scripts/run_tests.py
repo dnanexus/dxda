@@ -21,7 +21,9 @@ aws_ladder = {
 aws_large_data = {
     # A c5d.18xlarge amazon instance with 5.6TB of storage and 25Gbps networking.
     "small" : ["mem1_ssd2_v2_x72"],
-    "large" : ["mem3_ssd1_v2_x32"]
+
+    # dx_r5d.16xlarge_v2 with 3.2TB of storage and 20Gbps networking.
+    "large" : ["mem3_ssd1_v2_x64"]
 }
 
 azure_ladder = {

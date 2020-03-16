@@ -216,7 +216,7 @@ func dxHttpRequestCoreBypass(
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) ( []byte, error) {
+	data []byte) ( *http.Response, error) {
 	var dataReader io.Reader
 	if data != nil {
 		dataReader = bytes.NewReader(data)
@@ -234,12 +234,12 @@ func dxHttpRequestCoreBypass(
 	if err != nil {
 		return nil, err
 	}
-	body, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
 	statusCode, statusHumanReadable := parseStatus(resp.Status)
 
 	// If the status is not in the 200-299 range, an error occured.
 	if !(isGood(statusCode)) {
+		body, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 		httpError := HttpError{
 			Message : body,
 			StatusCode : statusCode,
@@ -249,7 +249,7 @@ func dxHttpRequestCoreBypass(
 	}
 
 	// good status
-	return body, nil
+	return resp, nil
 }
 
 
@@ -259,7 +259,7 @@ func dxHttpRequestCore(
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) ( []byte, error) {
+	data []byte) ( *http.Response, error) {
 	req, err := retryablehttp.NewRequest(requestType, url, data)
 	if err != nil {
 		return nil, err
@@ -273,12 +273,12 @@ func dxHttpRequestCore(
 	if err != nil {
 		return nil, err
 	}
-	body, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
 	statusCode, statusHumanReadable := parseStatus(resp.Status)
 
 	// If the status is not in the 200-299 range, an error occured.
 	if !(isGood(statusCode)) {
+		body, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 		httpError := HttpError{
 			Message : body,
 			StatusCode : statusCode,
@@ -288,7 +288,7 @@ func dxHttpRequestCore(
 	}
 
 	// good status
-	return body, nil
+	return resp, nil
 }
 
 
@@ -301,7 +301,7 @@ func DxHttpRequest(
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) ([]byte, error) {
+	data []byte) (*http.Response, error) {
 
 	attemptTimeout := attemptTimeoutInit
 	var tCnt int
@@ -313,17 +313,18 @@ func DxHttpRequest(
 			attemptTimeout = MinInt(2 * attemptTimeout, attemptTimeoutMax)
 		}
 
-		var body []byte
+		// circumvent an error in the retryablehttp library
+		var response *http.Response
 		var err error
 		if requestType == "PUT" && (data == nil || len(data) == 0) {
 			// circumvent an error in the retryablehttp library
-			body, err = dxHttpRequestCoreBypass(ctx, client, requestType, url, headers, data)
+			response, err = dxHttpRequestCoreBypass(ctx, client, requestType, url, headers, data)
 		} else {
-			body, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
+			response, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
 		}
 		if err == nil {
 			// http request went well, return the body
-			return body, nil
+			return response, nil
 		}
 
 		// triage the error
@@ -380,7 +381,9 @@ func DxAPI(
 	})
 	defer timer.Stop()
 
-	body, err := DxHttpRequest(ctx2, client, numRetries, "POST", url, headers, []byte(payload))
+	resp, err := DxHttpRequest(ctx2, client, numRetries, "POST", url, headers, []byte(payload))
+	body, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 
 	if err != nil {
 		switch err.(type) {
@@ -398,7 +401,7 @@ func DxAPI(
 				dxErr.Message = dxErrJson.E.Message
 			} else {
 				log.Printf("response is larger than maximum, %d > %d",
-					len(body), maxSizeResponse)
+					len(hErr.Message), maxSizeResponse)
 			}
 
 			// the status can just be copied from the http error.
