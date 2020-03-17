@@ -15,7 +15,7 @@ rm -f $manifest || true
 python ${DXDA_ROOT}/scripts/create_manifest.py -r /correctness
 
 # download and check
-$dxda download $manifest
+$dxda download -gc_info $manifest
 $dxda inspect $manifest
 
 # intentionally corrupt one file, this should be detected when

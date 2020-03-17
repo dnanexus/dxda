@@ -18,17 +18,17 @@ aws_ladder = {
     "small" : ["mem1_ssd1_v2_x4"],
     "large" : ["mem1_ssd1_v2_x4", "mem1_ssd1_v2_x16", "mem3_ssd1_v2_x32"]
 }
-aws_large_data = {
-    # A c5d.18xlarge amazon instance with 5.6TB of storage and 25Gbps networking.
-    "small" : ["mem1_ssd2_v2_x72"],
 
-    # dx_r5d.16xlarge_v2 with 3.2TB of storage and 20Gbps networking.
-    "large" : ["mem3_ssd1_v2_x64"]
+# mem1_ssd2_v2_x72 : AWS c5d.18xlarge instance with 5.6 TiB of storage and 25 Gbps networking.
+# mem1_ssd2_v2_x36 : AWS c5d.9xlarge  instance with 2.8 TiB of storage and 10 Gbps networking.
+aws_large_data = {
+    "small" : ["mem1_ssd2_v2_x36"],
+    "large" : ["mem3_ssd1_v2_x32"]
 }
 
 azure_ladder = {
     "small" : ["azure:mem1_ssd1_x4"],
-    "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
+    "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"]
 }
 azure_large_data = {
     "small" : ["azure:mem3_ssd1_x16"],
@@ -98,19 +98,27 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch_and_wait(project, applet, manifest, instance_types):
+def launch_and_wait(project, applet, manifest, instance_types, debug_flag):
     print("instance types={}".format(instance_types))
-    # Run the workflows
+    # Run the applets
     jobs=[]
     inputs = {
-        "manifest" : dxpy.dxlink(manifest) #{"$dnanexus_link": manifest.get_id()}
+        "manifest" : dxpy.dxlink(manifest),
+        "gc_info" : True
     }
+
+    run_kwargs = {}
+    if debug_flag:
+        run_kwargs = {
+            "allow_ssh" : [ "*" ]
+        }
 
     for itype in instance_types:
         print("intance: {}".format(itype))
         job = applet.run(inputs,
                          project=project.get_id(),
-                         instance_type=itype)
+                         instance_type=itype,
+                         **run_kwargs)
         jobs.append(job)
     print("executables: " + ", ".join([a.get_id() for a in jobs]))
 
@@ -119,10 +127,10 @@ def launch_and_wait(project, applet, manifest, instance_types):
     return jobs
 
 
-def run_correctness(dx_proj, instance_types):
+def run_correctness(dx_proj, instance_types, debug_flag):
     applet = lookup_applet("dxda_correctness", dx_proj, "/applets")
     manifest = lookup_file("correctness.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types)
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, debug_flag)
 
     # extract results
     for j in jobs:
@@ -133,10 +141,10 @@ def run_correctness(dx_proj, instance_types):
 
 
 
-def run_benchmark(dx_proj, instance_types):
+def run_benchmark(dx_proj, instance_types, debug_flag):
     applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
     manifest = lookup_file("benchmark.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types)
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types. debug_flag)
 
     # extract results
     for j in jobs:
@@ -146,10 +154,10 @@ def run_benchmark(dx_proj, instance_types):
         print("{}, {}".format(i_type, result))
 
 
-def run_large_data(dx_proj, instance_types):
+def run_large_data(dx_proj, instance_types, debug_flag):
     applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
-    manifest = lookup_file("ukbb_cram_3TB.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types)
+    manifest = lookup_file("ukbb_cram_2TB.manifest.json.bz2", dx_proj, "/")
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, debug_flag)
 
     # extract results
     for j in jobs:
@@ -163,6 +171,8 @@ def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxda")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
+    argparser.add_argument("--debug", help="Various applet debugging options, currently, allow ssh access",
+                           action="store_true", default=False)
     argparser.add_argument("--test", help="which testing suite to run [bench, correct, large_data]")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
@@ -197,11 +207,11 @@ def main():
         print("Test not specified")
         exit(1)
     if args.test.startswith("bench"):
-        run_correctness(dx_proj, instance_types)
+        run_correctness(dx_proj, instance_types, args.debug)
     elif args.test.startswith("correct"):
-        run_benchmark(dx_proj, instance_types)
+        run_benchmark(dx_proj, instance_types, args.debug)
     elif args.test.startswith("large_data"):
-        run_large_data(dx_proj, instance_types)
+        run_large_data(dx_proj, instance_types, args.debug)
     else:
         print("Unknown test {}".format(args.test))
         exit(1)

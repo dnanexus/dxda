@@ -34,6 +34,7 @@ const (
 type Opts struct {
 	NumThreads int   // number of workers to process downloads
 	Verbose    bool  // verbose logging
+	GcInfo     bool  // Garbage collection statistics
 }
 
 // A subset of the configuration parameters that the dx-toolkit uses.

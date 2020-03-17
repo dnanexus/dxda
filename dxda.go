@@ -29,7 +29,7 @@ import (
 const (
 	// Range for the number of threads we want to use
 	minNumThreads = 2
-	maxNumThreads = 64
+	maxNumThreads = 32
 
 	// handling the case of receiving the less data than we
 	// asked for
@@ -190,6 +190,7 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	// Limit the number of threads
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
+//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
 	return &State {
 		dxEnv : dxEnv,
@@ -516,11 +517,26 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 	// calculate bandwitdh
 	bandwidthMBSec := st.calcBandwidth(timeWindowNanoSec)
 
-	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)",
+	// report on GC statistics
+	gcReport := ""
+	if (st.opts.GcInfo) {
+		var gcStats runtime.MemStats
+		runtime.ReadMemStats(&gcStats)
+		crntAlloc := int64(gcStats.Alloc)
+		totalAlloc := int64(gcStats.TotalAlloc)
+		pauseNs := gcStats.PauseTotalNs
+		numGcCycles := gcStats.NumGC
+
+		gcReport = fmt.Sprintf("   GC (alloc=%d/%d MB, pause=%d ms, #cycles=%d)",
+			bytes2MiB(crntAlloc), bytes2MiB(totalAlloc),
+			pauseNs/1e6, numGcCycles)
+	}
+	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)%s",
 		bytes2MiB(st.ds.NumBytesComplete), bytes2MiB(st.ds.NumBytes),
 		st.ds.NumPartsComplete, st.ds.NumParts,
 		bandwidthMBSec,
-		timeWindowNanoSec/1e9)
+		timeWindowNanoSec/1e9,
+		gcReport)
 
 	return desc
 }
@@ -601,8 +617,7 @@ func (st *State) downloadSymlinkPart(
 	httpClient *retryablehttp.Client,
 	p DBPartSymlink,
 	wg *sync.WaitGroup,
-	u DXDownloadURL,
-	memoryBuf []byte) error {
+	u DXDownloadURL) error {
 
 	if st.opts.Verbose {
 		log.Printf("downloadSymlinkPart %v %v\n", p, u)
@@ -619,9 +634,9 @@ func (st *State) downloadSymlinkPart(
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
-	err = st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size, memoryBuf)
+	body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size)
 	check(err)
-	_, err = localf.WriteAt(memoryBuf[:p.Size], p.offset())
+	_, err = localf.WriteAt(body, p.offset())
 	check(err)
 
 	st.updateDBPart(p)
@@ -634,8 +649,7 @@ func (st *State) downloadRegPartCheckSum(
 	httpClient *retryablehttp.Client,
 	p DBPartRegular,
 	wg *sync.WaitGroup,
-	u DXDownloadURL,
-	memoryBuf []byte) (bool, error) {
+	u DXDownloadURL) (bool, error) {
 
 	if st.opts.Verbose {
 		log.Printf("downloadRegPart %v %v\n", p, u)
@@ -647,7 +661,7 @@ func (st *State) downloadRegPartCheckSum(
 	defer localf.Close()
 
 	// compute the checksum as we go
-	//hasher := md5.New()
+	hasher := md5.New()
 
 	// loop through the part, reading in chunk pieces
 	endPart := p.Offset + int64(p.Size) - 1
@@ -661,23 +675,21 @@ func (st *State) downloadRegPartCheckSum(
 			headers[k] = v
 		}
 
-		err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize, memoryBuf)
+		body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize)
 		check(err)
-		_, err = localf.WriteAt(memoryBuf[:chunkSize], ofs)
+		_, err = localf.WriteAt(body, ofs)
 		check(err)
 
 		// update the checksum
-/*		memoryReader := bytes.NewReader(memoryBuf)
-		chunkReader := io.LimitReader(memoryReader, int64(chunkSize))
-		_, err = io.Copy(hasher, chunkReader)
-		check(err)*/
+		_, err = io.Copy(hasher, bytes.NewReader(body))
+		check(err)
 	}
 
 	// verify the checksum
-/*	diskSum := hex.EncodeToString(hasher.Sum(nil))
+	diskSum := hex.EncodeToString(hasher.Sum(nil))
 	if diskSum != p.MD5 {
 		return false, nil
-	}*/
+	}
 
 	st.updateDBPart(p)
 	return true, nil
@@ -687,11 +699,10 @@ func (st *State) downloadRegPart(
 	httpClient *retryablehttp.Client,
 	p DBPartRegular,
 	wg *sync.WaitGroup,
-	u DXDownloadURL,
-	memoryBuf []byte) error {
+	u DXDownloadURL) error {
 
 	for i := 0 ; i < numRetriesChecksumMismatch; i++ {
-		ok, err := st.downloadRegPartCheckSum(httpClient, p, wg, u, memoryBuf)
+		ok, err := st.downloadRegPartCheckSum(httpClient, p, wg, u)
 		if err != nil {
 			return err
 		}
@@ -709,14 +720,13 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 	// Create one http client per worker. This should, hopefully, allow
 	// caching open TCP/HTTP connections, reducing startup times.
 	httpClient := NewHttpClient(true)
-	memoryBuf := make([]byte, st.maxChunkSize)
 
 	for j := range jobs {
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
 			u := st.createURL(p, httpClient)
-			st.downloadRegPart(httpClient, p, j.wg, u, memoryBuf)
+			st.downloadRegPart(httpClient, p, j.wg, u)
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
@@ -724,7 +734,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 				URL : pLnk.Url,
 				Headers : make(map[string]string, 0),
 			}
-			st.downloadSymlinkPart(httpClient, pLnk, j.wg, u, memoryBuf)
+			st.downloadSymlinkPart(httpClient, pLnk, j.wg, u)
 		}
 	}
 	wg.Done()
@@ -907,8 +917,7 @@ func (st *State) dxHttpRequestData(
 	url string,
 	headers map[string]string,
 	data []byte,
-	expectedLen int,
-	memoryBuf []byte) error {
+	dataLen int) (body []byte, err error) {
 
 	// Safety procedure to force timeout to prevent hanging
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -918,31 +927,25 @@ func (st *State) dxHttpRequestData(
 	defer timer.Stop()
 
 	for i := 0; i < badLengthNumRetries; i ++ {
-		response, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
+		body, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
 		if err != nil {
-			return err
-		}
-
-		// copy the response into a pre-allocated buffer
-		buf := bytes.NewBuffer(memoryBuf)
-		recvLen, err := io.Copy(buf, response.Body)
-		response.Body.Close()
-		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// check that the length is correct
-		if recvLen != int64(expectedLen) {
+		recvLen := len(body)
+		if recvLen != dataLen {
 			// Note: it would be preferable to collect partial results and concatenate them.
-			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, expectedLen)
+			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, dataLen)
 			time.Sleep(time.Duration(badLengthTimeout) * time.Second)
 			continue
 		}
-		return nil
+		return body, nil
 	}
 
-	return fmt.Errorf("%s request to %s failed after %d attempts",
+	err = fmt.Errorf("%s request to %s failed after %d attempts",
 		requestType, url, badLengthNumRetries)
+	return nil, err
 }
 
 // -----------------------------------------
