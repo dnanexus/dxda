@@ -103,7 +103,8 @@ def launch_and_wait(project, applet, manifest, instance_types, debug_flag):
     # Run the applets
     jobs=[]
     inputs = {
-        "manifest" : dxpy.dxlink(manifest)
+        "manifest" : dxpy.dxlink(manifest),
+        "gc_info" : True
     }
 
     run_kwargs = {}

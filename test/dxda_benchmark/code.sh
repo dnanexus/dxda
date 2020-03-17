@@ -18,8 +18,16 @@ main() {
 
     mv ${HOME}/in/manifest/*.json.bz2 manifest.json.bz2
 
+    flags=""
+    if $verbose; then
+        flags="$flags -verbose"
+    fi
+    if $gc_info; then
+        flags="$flags -gcInfo"
+    fi
+
     start=`date +%s`
-    dx-download-agent download manifest.json.bz2
+    dx-download-agent download ${flags} manifest.json.bz2
     end=`date +%s`
     runtime=$((end-start))
 

@@ -16,6 +16,7 @@ import (
 type downloadCmd struct {
 	numThreads int
 	verbose bool
+	gcInfo bool
 }
 
 const downloadUsage = "dx-download-agent download [-max_threads=N] <manifest.json.bz2>"
@@ -29,6 +30,7 @@ func (p *downloadCmd) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&p.numThreads, "num_threads", 0, "Number of threads to use when downloading files. By default (or if zero), this number is chosen according to machine memory and CPU constraints.")
 	f.IntVar(&p.numThreads, "max_threads", 0, "An alias for num_threads")
 	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
+	f.BoolVar(&p.gcInfo, "gc_info", false, "report statistics for golang garbage collection")
 }
 
 func check(e error) {
@@ -62,6 +64,7 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	var opts dxda.Opts
 	opts.NumThreads = p.numThreads
 	opts.Verbose = p.verbose
+	opts.GcInfo = p.gcInfo
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
