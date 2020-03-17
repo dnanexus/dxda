@@ -23,7 +23,7 @@ main() {
         flags="$flags -verbose"
     fi
     if $gc_info; then
-        flags="$flags -gcInfo"
+        flags="$flags -gc_info"
     fi
 
     start=`date +%s`

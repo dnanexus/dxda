@@ -110,7 +110,6 @@ def launch_and_wait(project, applet, manifest, instance_types, debug_flag):
     run_kwargs = {}
     if debug_flag:
         run_kwargs = {
-            "debug": {"debugOn": ['AppError', 'AppInternalError', 'ExecutionError'] },
             "allow_ssh" : [ "*" ]
         }
 
@@ -172,7 +171,7 @@ def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxda")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
-    argparser.add_argument("--debug", help="Run applets with debug-hold, and allow ssh",
+    argparser.add_argument("--debug", help="Various applet debugging options, currently, allow ssh access",
                            action="store_true", default=False)
     argparser.add_argument("--test", help="which testing suite to run [bench, correct, large_data]")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
