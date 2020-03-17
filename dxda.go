@@ -190,6 +190,7 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	// Limit the number of threads
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
+//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
 	return &State {
 		dxEnv : dxEnv,
@@ -516,11 +517,26 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 	// calculate bandwitdh
 	bandwidthMBSec := st.calcBandwidth(timeWindowNanoSec)
 
-	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)",
+	// report on GC statistics
+	gcReport := ""
+	if (st.opts.GcInfo) {
+		var gcStats runtime.MemStats
+		runtime.ReadMemStats(&gcStats)
+		crntAlloc := int64(gcStats.Alloc)
+		totalAlloc := int64(gcStats.TotalAlloc)
+		pauseNs := gcStats.PauseTotalNs
+		numGcCycles := gcStats.NumGC
+
+		gcReport = fmt.Sprintf("   GC (alloc=%d/%d MB, pause=%d ms, #cycles=%d)",
+			bytes2MiB(crntAlloc), bytes2MiB(totalAlloc),
+			pauseNs/1e6, numGcCycles)
+	}
+	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)%s",
 		bytes2MiB(st.ds.NumBytesComplete), bytes2MiB(st.ds.NumBytes),
 		st.ds.NumPartsComplete, st.ds.NumParts,
 		bandwidthMBSec,
-		timeWindowNanoSec/1e9)
+		timeWindowNanoSec/1e9,
+		gcReport)
 
 	return desc
 }

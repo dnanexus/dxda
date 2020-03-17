@@ -10,6 +10,11 @@
       "optional": true
     },
     {
+      "name": "gc_info",
+      "class": "boolean",
+      "optional": true
+    },
+    {
       "name": "manifest",
       "class": "file"
     }
