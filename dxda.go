@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"io"
+	"io/ioutil"
 	"os"
 	"path"
 	"runtime"
@@ -927,10 +928,12 @@ func (st *State) dxHttpRequestData(
 	defer timer.Stop()
 
 	for i := 0; i < badLengthNumRetries; i ++ {
-		body, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
+		resp, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
 		if err != nil {
 			return nil, err
 		}
+		body, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 
 		// check that the length is correct
 		recvLen := len(body)
