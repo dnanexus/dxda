@@ -12,18 +12,15 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
-
-	"github.com/hashicorp/go-cleanhttp"     // required by go-retryablehttp
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 const (
-	minRetryTime = 1   // seconds
-	maxRetryTime = 120 // seconds
 	maxRetryCount = 10
 	userAgent = "dxda: DNAnexus download agent"
 	reqTimeout = 15  // seconds
@@ -142,23 +139,34 @@ func isRetryable(requestType string, status int) bool {
 	return false
 }
 
+
+// DefaultPooledTransport returns a new http.Transport with similar default
+// values to http.DefaultTransport. Do not use this for transient transports as
+// it can leak file descriptors over time. Only use this for transports that
+// will be re-used for the same host(s).
+func defaultPooledTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			DualStack: true,
+		}).DialContext,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConnsPerHost:   runtime.GOMAXPROCS(0) + 1,
+	}
+}
+
 // These clients are intended for reuse in the same host. Throwing them
 // away will gradually leak file descriptors.
-func NewHttpClient(pooled bool) *retryablehttp.Client {
+func NewHttpClient() *http.Client {
 	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
 	if localCertFile == "" {
-		client := cleanhttp.DefaultClient()
-		if pooled {
-			client = cleanhttp.DefaultPooledClient()
-		}
-		return &retryablehttp.Client{
-			HTTPClient:   client,
-			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-			RetryWaitMin: minRetryTime * time.Second,
-			RetryWaitMax: maxRetryTime * time.Second,
-			RetryMax:     maxRetryCount,
-			CheckRetry:   retryablehttp.DefaultRetryPolicy,
-			Backoff:      retryablehttp.DefaultBackoff,
+		return &http.Client{
+			Transport: defaultPooledTransport(),
 		}
 	}
 
@@ -188,31 +196,14 @@ func NewHttpClient(pooled bool) *retryablehttp.Client {
 		RootCAs:            rootCAs,
 	}
 
-	tr := cleanhttp.DefaultTransport()
-	if pooled {
-		tr = cleanhttp.DefaultPooledTransport()
-	}
+	tr := defaultPooledTransport()
 	tr.TLSClientConfig = config
-
-	return &retryablehttp.Client{
-		HTTPClient:   &http.Client{Transport: tr},
-		Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-		RetryWaitMin: minRetryTime * time.Second,
-		RetryWaitMax: maxRetryTime * time.Second,
-		RetryMax:     maxRetryCount,
-		CheckRetry:   retryablehttp.DefaultRetryPolicy,
-		Backoff:      retryablehttp.DefaultBackoff,
-	}
+	return &http.Client{Transport: tr}
 }
 
-// Bypass the retryablehttp library, it is causing an error.
-//
-// The error happens when doing an http PUT for a zero sized byte array.
-// The library somehow mangles the aws signature key, causing AWS to
-// reject the request with a 403 Forbidden code.
-func dxHttpRequestCoreBypass(
+func dxHttpRequestCore(
 	ctx context.Context,
-	client *retryablehttp.Client,
+	client *http.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
@@ -230,46 +221,7 @@ func dxHttpRequestCoreBypass(
 	}
 	//log.Printf("dxHttpRequestCoreBypass req=%v", req)
 
-	resp, err := client.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	statusCode, statusHumanReadable := parseStatus(resp.Status)
-
-	// If the status is not in the 200-299 range, an error occured.
-	if !(isGood(statusCode)) {
-		body, _ := ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-		httpError := HttpError{
-			Message : body,
-			StatusCode : statusCode,
-			StatusHumanReadable : statusHumanReadable,
-		}
-		return nil, &httpError
-	}
-
-	// good status
-	return resp, nil
-}
-
-
-func dxHttpRequestCore(
-	ctx context.Context,
-	client *retryablehttp.Client,
-	requestType string,
-	url string,
-	headers map[string]string,
-	data []byte) ( *http.Response, error) {
-	req, err := retryablehttp.NewRequest(requestType, url, data)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
 	resp, err := client.Do(req)
-
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +248,7 @@ func dxHttpRequestCore(
 //
 func DxHttpRequest(
 	ctx context.Context,
-	client *retryablehttp.Client,
+	client *http.Client,
 	numRetries int,
 	requestType string,
 	url string,
@@ -313,15 +265,7 @@ func DxHttpRequest(
 			attemptTimeout = MinInt(2 * attemptTimeout, attemptTimeoutMax)
 		}
 
-		// circumvent an error in the retryablehttp library
-		var response *http.Response
-		var err error
-		if requestType == "PUT" && (data == nil || len(data) == 0) {
-			// circumvent an error in the retryablehttp library
-			response, err = dxHttpRequestCoreBypass(ctx, client, requestType, url, headers, data)
-		} else {
-			response, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
-		}
+		response, err := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
 		if err == nil {
 			// http request went well, return the body
 			return response, nil
@@ -354,7 +298,7 @@ func DxHttpRequest(
 //
 func DxAPI(
 	ctx context.Context,
-	client *retryablehttp.Client,
+	client *http.Client,
 	numRetries int,
 	dxEnv *DXEnvironment,
 	api string,

@@ -13,9 +13,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"net/http"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"runtime"
@@ -24,7 +25,6 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
-	"github.com/hashicorp/go-retryablehttp" // http client library
 )
 
 const (
@@ -576,7 +576,7 @@ func (st *State) downloadProgressContinuous() {
 }
 
 // create a download url if one doesn't exist
-func (st *State) createURL(p DBPartRegular, httpClient *retryablehttp.Client) DXDownloadURL {
+func (st *State) createURL(p DBPartRegular, httpClient *http.Client) DXDownloadURL {
 	var u DXDownloadURL
 
 	// check if we already have it
@@ -615,7 +615,7 @@ func (st *State) createURL(p DBPartRegular, httpClient *retryablehttp.Client) DX
 
 // Download part of a symlink
 func (st *State) downloadSymlinkPart(
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	p DBPartSymlink,
 	wg *sync.WaitGroup,
 	u DXDownloadURL) error {
@@ -647,7 +647,7 @@ func (st *State) downloadSymlinkPart(
 // Download part of a file and verify its checksum in memory
 //
 func (st *State) downloadRegPartCheckSum(
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	p DBPartRegular,
 	wg *sync.WaitGroup,
 	u DXDownloadURL) (bool, error) {
@@ -697,7 +697,7 @@ func (st *State) downloadRegPartCheckSum(
 }
 
 func (st *State) downloadRegPart(
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	p DBPartRegular,
 	wg *sync.WaitGroup,
 	u DXDownloadURL) error {
@@ -720,7 +720,7 @@ func (st *State) downloadRegPart(
 func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 	// Create one http client per worker. This should, hopefully, allow
 	// caching open TCP/HTTP connections, reducing startup times.
-	httpClient := NewHttpClient(true)
+	httpClient := NewHttpClient()
 
 	for j := range jobs {
 		switch j.part.(type) {
@@ -913,7 +913,7 @@ func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 // Add retries around the core http-request method
 //
 func (st *State) dxHttpRequestData(
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	requestType string,
 	url string,
 	headers map[string]string,

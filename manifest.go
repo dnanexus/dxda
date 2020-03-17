@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -194,7 +195,7 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 // Fill in missing fields for each file. Split into symlinks, and regular files.
 //
 func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvironment) (*Manifest, error) {
-	tmpHttpClient := NewHttpClient(false)
+	tmpHttpClient := &http.Client{}
 
 	// Make a list of all the file-ids
 	var fileIds []string
