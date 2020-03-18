@@ -29,6 +29,6 @@ In order to test on the local machine, not on the cloud, go to directory `test/l
 
 
 | file name              |  what it does                          |  disk size | number of parts |
-| ---                    |                                        | ---        | ---             |
+| ----                   |  ---                                   | ---        | ---             |
 | `regular_file_test.sh` | small scale test for regular files     | 138 MB | 559 |
 | `symlink_test.sh`      | test with five moderate sized symlinks | 98 MB | 10 |
