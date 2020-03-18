@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"time"
 )
@@ -27,18 +26,6 @@ const (
 	attemptTimeoutInit = 2 // seconds
 	attemptTimeoutMax = 600 // seconds
 	maxSizeResponse = 16 * 1024
-)
-
-var (
-	// A regular expression to match the error returned by net/http when the
-	// configured number of redirects is exhausted. This error isn't typed
-	// specifically so we resort to matching on the error string.
-	redirectsErrorRe = regexp.MustCompile(`stopped after \d+ redirects\z`)
-
-	// A regular expression to match the error returned by net/http when the
-	// scheme specified in the URL is invalid. This error isn't typed
-	// specifically so we resort to matching on the error string.
-	schemeErrorRe = regexp.MustCompile(`unsupported protocol scheme`)
 )
 
 type HttpError struct {
@@ -272,11 +259,6 @@ func DxHttpRequest(
 	var tCnt int
 	var err error
 	for tCnt = 0; tCnt < numRetries; tCnt++ {
-		// check if the timeout has passed
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
 		if (tCnt > 0) {
 			// sleep before retrying. Use bounded exponential backoff.
 			time.Sleep(time.Duration(attemptTimeout) * time.Second)
