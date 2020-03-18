@@ -1158,7 +1158,7 @@ func (st *State) checkAllSymlinkIntegrity() bool {
 	//
 	for _, slnk := range(completed) {
 		if st.opts.Verbose {
-			fmt.Println("Checking symlink %s", slnk.Url)
+			fmt.Printf("Checking symlink %s\n", slnk.Url)
 		}
 		jobs <- slnk
 	}

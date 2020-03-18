@@ -144,7 +144,7 @@ def run_correctness(dx_proj, instance_types, debug_flag):
 def run_benchmark(dx_proj, instance_types, debug_flag):
     applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
     manifest = lookup_file("benchmark.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types. debug_flag)
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, debug_flag)
 
     # extract results
     for j in jobs:

@@ -15,7 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"runtime"
+	"regexp"
 	"strconv"
 	"time"
 )
@@ -27,6 +27,18 @@ const (
 	attemptTimeoutInit = 2 // seconds
 	attemptTimeoutMax = 600 // seconds
 	maxSizeResponse = 16 * 1024
+)
+
+var (
+	// A regular expression to match the error returned by net/http when the
+	// configured number of redirects is exhausted. This error isn't typed
+	// specifically so we resort to matching on the error string.
+	redirectsErrorRe = regexp.MustCompile(`stopped after \d+ redirects\z`)
+
+	// A regular expression to match the error returned by net/http when the
+	// scheme specified in the URL is invalid. This error isn't typed
+	// specifically so we resort to matching on the error string.
+	schemeErrorRe = regexp.MustCompile(`unsupported protocol scheme`)
 )
 
 type HttpError struct {
@@ -83,18 +95,16 @@ func parseStatus(status string) (int, string) {
 
 // Good status is in the range 2xx
 func isGood(status int) bool {
-	switch status {
-	case 200, 201, 202, 203, 204, 205, 206:
-		return true
-	default:
-		return false
-	}
+	return (200 <= status && status < 300)
 }
 
 
-// TODO: Investigate more sophsticated handling of these error codes ala
-// https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
-func isRetryable(requestType string, status int) bool {
+func isRetryable(ctx context.Context, requestType string, status int) bool {
+	// do not retry on context.Canceled or context.DeadlineExceeded
+	if ctx.Err() != nil {
+		return false
+	}
+
 	switch status {
 	case 408:
 		// Request timeout
@@ -156,7 +166,6 @@ func defaultPooledTransport() *http.Transport {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		MaxIdleConnsPerHost:   runtime.GOMAXPROCS(0) + 1,
 	}
 }
 
@@ -212,19 +221,22 @@ func dxHttpRequestCore(
 	if data != nil {
 		dataReader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(requestType, url, dataReader)
+	req, err := http.NewRequestWithContext(ctx, requestType, url, dataReader)
 	if err != nil {
 		return nil, err
 	}
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	//log.Printf("dxHttpRequestCoreBypass req=%v", req)
 
 	resp, err := client.Do(req)
 	if err != nil {
+		// read the response body so we can reuse this connection.
+		_, _ = io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
 		return nil, err
 	}
+
 	statusCode, statusHumanReadable := parseStatus(resp.Status)
 
 	// If the status is not in the 200-299 range, an error occured.
@@ -259,6 +271,11 @@ func DxHttpRequest(
 	var tCnt int
 	var err error
 	for tCnt = 0; tCnt < numRetries; tCnt++ {
+		// check if the timeout has passed
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		if (tCnt > 0) {
 			// sleep before retrying. Use bounded exponential backoff.
 			time.Sleep(time.Duration(attemptTimeout) * time.Second)
@@ -275,12 +292,13 @@ func DxHttpRequest(
 		switch err.(type) {
 		case *HttpError:
 			hErr := err.(*HttpError)
-			if !isRetryable(requestType, hErr.StatusCode) {
+			if !isRetryable(ctx, requestType, hErr.StatusCode) {
 				// A non-retryable error, return the http error
 				return nil, hErr
 			}
 			// A retryable http error.
 			continue
+
 		default:
 			// connection error/timeout error/library error. This is non retryable
 			log.Printf(err.Error())
