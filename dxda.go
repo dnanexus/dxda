@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"net/http"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -618,7 +617,8 @@ func (st *State) downloadSymlinkPart(
 	httpClient *http.Client,
 	p DBPartSymlink,
 	wg *sync.WaitGroup,
-	u DXDownloadURL) error {
+	u DXDownloadURL,
+	memoryBuf []byte) error {
 
 	if st.opts.Verbose {
 		log.Printf("downloadSymlinkPart %v %v\n", p, u)
@@ -635,8 +635,10 @@ func (st *State) downloadSymlinkPart(
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
-	body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size)
+	err = st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size, memoryBuf)
 	check(err)
+	body := memoryBuf[:p.Size]
+
 	_, err = localf.WriteAt(body, p.offset())
 	check(err)
 
@@ -650,7 +652,8 @@ func (st *State) downloadRegPartCheckSum(
 	httpClient *http.Client,
 	p DBPartRegular,
 	wg *sync.WaitGroup,
-	u DXDownloadURL) (bool, error) {
+	u DXDownloadURL,
+	memoryBuf []byte) (bool, error) {
 
 	if st.opts.Verbose {
 		log.Printf("downloadRegPart %v %v\n", p, u)
@@ -676,8 +679,11 @@ func (st *State) downloadRegPartCheckSum(
 			headers[k] = v
 		}
 
-		body, err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize)
+		err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize, memoryBuf)
 		check(err)
+		body := memoryBuf[:chunkSize]
+
+		// write to disk
 		_, err = localf.WriteAt(body, ofs)
 		check(err)
 
@@ -700,10 +706,11 @@ func (st *State) downloadRegPart(
 	httpClient *http.Client,
 	p DBPartRegular,
 	wg *sync.WaitGroup,
-	u DXDownloadURL) error {
+	u DXDownloadURL,
+	memoryBuf []byte) error {
 
 	for i := 0 ; i < numRetriesChecksumMismatch; i++ {
-		ok, err := st.downloadRegPartCheckSum(httpClient, p, wg, u)
+		ok, err := st.downloadRegPartCheckSum(httpClient, p, wg, u, memoryBuf)
 		if err != nil {
 			return err
 		}
@@ -721,13 +728,14 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 	// Create one http client per worker. This should, hopefully, allow
 	// caching open TCP/HTTP connections, reducing startup times.
 	httpClient := NewHttpClient()
+	memoryBuf := make([]byte, st.maxChunkSize)
 
 	for j := range jobs {
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
 			u := st.createURL(p, httpClient)
-			st.downloadRegPart(httpClient, p, j.wg, u)
+			st.downloadRegPart(httpClient, p, j.wg, u, memoryBuf)
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
@@ -735,7 +743,7 @@ func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
 				URL : pLnk.Url,
 				Headers : make(map[string]string, 0),
 			}
-			st.downloadSymlinkPart(httpClient, pLnk, j.wg, u)
+			st.downloadSymlinkPart(httpClient, pLnk, j.wg, u, memoryBuf)
 		}
 	}
 	wg.Done()
@@ -918,7 +926,8 @@ func (st *State) dxHttpRequestData(
 	url string,
 	headers map[string]string,
 	data []byte,
-	dataLen int) (body []byte, err error) {
+	dataLen int,
+	memoryBuf []byte) error {
 
 	// Safety procedure to force timeout to prevent hanging
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -930,25 +939,27 @@ func (st *State) dxHttpRequestData(
 	for i := 0; i < badLengthNumRetries; i ++ {
 		resp, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		body, _ := ioutil.ReadAll(resp.Body)
+
+		//body, _ := ioutil.ReadAll(resp.Body)
+		// we are saving an allocation by using a pre-allocated
+		// buffer.
+		recvLen, _ := io.ReadAtLeast(resp.Body, memoryBuf, dataLen)
 		resp.Body.Close()
 
 		// check that the length is correct
-		recvLen := len(body)
 		if recvLen != dataLen {
 			// Note: it would be preferable to collect partial results and concatenate them.
 			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, dataLen)
 			time.Sleep(time.Duration(badLengthTimeout) * time.Second)
 			continue
 		}
-		return body, nil
+		return nil
 	}
 
-	err = fmt.Errorf("%s request to %s failed after %d attempts",
+	return fmt.Errorf("%s request to %s failed after %d attempts",
 		requestType, url, badLengthNumRetries)
-	return nil, err
 }
 
 // -----------------------------------------
