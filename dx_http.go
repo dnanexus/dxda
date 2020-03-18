@@ -166,6 +166,7 @@ func defaultPooledTransport() *http.Transport {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		ReadBufferSize : 64 * KiB,
 	}
 }
 
