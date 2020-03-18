@@ -178,6 +178,7 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	} else {
 		// A cloud worker with good bandwitdh
 		maxChunkSize = 64 * MiB
+		//maxChunkSize = 128 * MiB
 	}
 
 	// if the number of threads isn't set we

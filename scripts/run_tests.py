@@ -23,7 +23,7 @@ aws_ladder = {
 # mem1_ssd2_v2_x36 : AWS c5d.9xlarge  instance with 2.8 TiB of storage and 10 Gbps networking.
 aws_large_data = {
     "small" : ["mem1_ssd2_v2_x36"],
-    "large" : ["mem3_ssd1_v2_x32"]
+    "large" : ["mem3_ssd3_x24"]
 }
 
 azure_ladder = {
