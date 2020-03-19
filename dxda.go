@@ -115,6 +115,12 @@ type DownloadStatus struct {
 	// Size of window in nanoseconds where to look for
 	// completed downloads
 	MaxWindowSize int64
+
+	// how many preauthenticatd URLs we created
+	PreauthUrlNum int
+
+	// total time spent on preauthenticated URLs
+	PreauthUrlNanosec int64
 }
 
 type State struct {
@@ -527,16 +533,23 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 		pauseNs := gcStats.PauseTotalNs
 		numGcCycles := gcStats.NumGC
 
-		gcReport = fmt.Sprintf("   GC (alloc=%d/%d MB, pause=%d ms, #cycles=%d)",
+		gcReport = fmt.Sprintf("  GC (alloc=%d/%d MB, pause=%d ms, #cycles=%d)",
 			bytes2MiB(crntAlloc), bytes2MiB(totalAlloc),
 			pauseNs/1e6, numGcCycles)
 	}
-	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)%s",
+	preauthReport := ""
+	if st.ds.PreauthUrlNum > 0 {
+		preauthReport = fmt.Sprintf("  PreauthURLs(num=%d, avgTime(ms)=%d)",
+			st.ds.PreauthUrlNum,
+			(st.ds.PreauthUrlNanosec / (int64(st.ds.PreauthUrlNum) * 1000000)))
+	}
+	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)%s%s",
 		bytes2MiB(st.ds.NumBytesComplete), bytes2MiB(st.ds.NumBytes),
 		st.ds.NumPartsComplete, st.ds.NumParts,
 		bandwidthMBSec,
 		timeWindowNanoSec/1e9,
-		gcReport)
+		gcReport,
+		preauthReport)
 
 	return desc
 }
@@ -590,6 +603,7 @@ func (st *State) createURL(p DBPartRegular, httpClient *http.Client) DXDownloadU
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 		p.Project, secondsInYear)
 
+	startNs := time.Now().UnixNano()
 	body, err := DxAPI(
 		context.TODO(),
 		httpClient,
@@ -598,6 +612,7 @@ func (st *State) createURL(p DBPartRegular, httpClient *http.Client) DXDownloadU
 		fmt.Sprintf("%s/download", p.FileId),
 		payload)
 	check(err)
+	endNs := time.Now().UnixNano()
 
 	if err := json.Unmarshal(body, &u); err != nil {
 		log.Printf(err.Error())
@@ -607,6 +622,10 @@ func (st *State) createURL(p DBPartRegular, httpClient *http.Client) DXDownloadU
 	// record the pre-auth URL so we don't have to create it again
 	st.mutex.Lock()
 	st.urls[p.FileId] = u
+
+	// update statistics
+	st.ds.PreauthUrlNum++
+	st.ds.PreauthUrlNanosec += (endNs - startNs)
 	st.mutex.Unlock()
 
 	return u
