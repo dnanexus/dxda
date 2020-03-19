@@ -191,7 +191,6 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	// Limit the number of threads
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
-//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
 	return &State {
 		dxEnv : dxEnv,
