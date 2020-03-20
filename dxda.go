@@ -98,8 +98,9 @@ func (slnk DBPartSymlink) size() int        { return slnk.Size }
 
 // JobInfo ...
 type JobInfo struct {
-	part             DBPart
+	part              DBPart
 	wg               *sync.WaitGroup
+	url              *DXDownloadURL
 }
 
 // DownloadStatus ...
@@ -115,12 +116,6 @@ type DownloadStatus struct {
 	// Size of window in nanoseconds where to look for
 	// completed downloads
 	MaxWindowSize int64
-
-	// how many preauthenticatd URLs we created
-	PreauthUrlNum int
-
-	// total time spent on preauthenticated URLs
-	PreauthUrlNanosec int64
 }
 
 type State struct {
@@ -129,7 +124,6 @@ type State struct {
 	mutex            sync.Mutex
 	db              *sql.DB
 	ds              *DownloadStatus
-	urls             map[string]DXDownloadURL
 	timeOfLastError  int
 	maxChunkSize     int64
 }
@@ -204,7 +198,6 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 		mutex : sync.Mutex{},
 		db : db,
 		ds : nil,
-		urls : make(map[string]DXDownloadURL),
 		timeOfLastError : 0,
 		maxChunkSize : maxChunkSize,
 	}
@@ -537,19 +530,12 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 			bytes2MiB(crntAlloc), bytes2MiB(totalAlloc),
 			pauseNs/1e6, numGcCycles)
 	}
-	preauthReport := ""
-	if st.ds.PreauthUrlNum > 0 {
-		preauthReport = fmt.Sprintf("  PreauthURLs(num=%d, avgTime(ms)=%d)",
-			st.ds.PreauthUrlNum,
-			(st.ds.PreauthUrlNanosec / (int64(st.ds.PreauthUrlNum) * 1000000)))
-	}
-	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)%s%s",
+	desc := fmt.Sprintf("Downloaded %d/%d MB\t%d/%d Parts (~%.1f MB/s written to disk estimated over the last %ds)%s",
 		bytes2MiB(st.ds.NumBytesComplete), bytes2MiB(st.ds.NumBytes),
 		st.ds.NumPartsComplete, st.ds.NumParts,
 		bandwidthMBSec,
 		timeWindowNanoSec/1e9,
-		gcReport,
-		preauthReport)
+		gcReport)
 
 	return desc
 }
@@ -587,50 +573,6 @@ func (st *State) downloadProgressContinuous() {
 	}
 }
 
-// create a download url if one doesn't exist
-func (st *State) createURL(p DBPartRegular, httpClient *http.Client) DXDownloadURL {
-	var u DXDownloadURL
-
-	// check if we already have it
-	st.mutex.Lock()
-	u, ok := st.urls[p.FileId]
-	st.mutex.Unlock()
-	if ok {
-		return u
-	}
-
-	// a regular DNAx file. Requires generating a pre-authenticated download URL.
-	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-		p.Project, secondsInYear)
-
-	startNs := time.Now().UnixNano()
-	body, err := DxAPI(
-		context.TODO(),
-		httpClient,
-		numRetries,
-		&st.dxEnv,
-		fmt.Sprintf("%s/download", p.FileId),
-		payload)
-	check(err)
-	endNs := time.Now().UnixNano()
-
-	if err := json.Unmarshal(body, &u); err != nil {
-		log.Printf(err.Error())
-		panic("Could not unmarshal response from dnanexus for download URL")
-	}
-
-	// record the pre-auth URL so we don't have to create it again
-	st.mutex.Lock()
-	st.urls[p.FileId] = u
-
-	// update statistics
-	st.ds.PreauthUrlNum++
-	st.ds.PreauthUrlNanosec += (endNs - startNs)
-	st.mutex.Unlock()
-
-	return u
-}
-
 // Download part of a symlink
 func (st *State) downloadSymlinkPart(
 	httpClient *http.Client,
@@ -657,6 +599,7 @@ func (st *State) downloadSymlinkPart(
 	err = st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size, memoryBuf)
 	check(err)
 	body := memoryBuf[:p.Size]
+
 
 	_, err = localf.WriteAt(body, p.offset())
 	check(err)
@@ -743,27 +686,93 @@ func (st *State) downloadRegPart(
 		p.PartId, u.URL, numRetriesChecksumMismatch)
 }
 
-func (st *State) worker(id int, jobs <-chan JobInfo, wg *sync.WaitGroup) {
-	// Create one http client per worker. This should, hopefully, allow
-	// caching open TCP/HTTP connections, reducing startup times.
+// create a download url if one doesn't exist
+func (st *State) createURL(p DBPartRegular, urls map[string]DXDownloadURL, httpClient *http.Client) *DXDownloadURL {
+	var u DXDownloadURL
+
+	// check if we already have it
+	u, ok := urls[p.FileId]
+	if ok {
+		return &u
+	}
+
+	// a regular DNAx file. Requires generating a pre-authenticated download URL.
+	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
+		p.Project, secondsInYear)
+
+	body, err := DxAPI(
+		context.TODO(),
+		httpClient,
+		numRetries,
+		&st.dxEnv,
+		fmt.Sprintf("%s/download", p.FileId),
+		payload)
+	check(err)
+
+	if err := json.Unmarshal(body, &u); err != nil {
+		log.Printf(err.Error())
+		panic("Could not unmarshal response from dnanexus for download URL")
+	}
+
+	// record the pre-auth URL so we don't have to create it again
+	urls[p.FileId] = u
+	return &u
+}
+
+// A thread that adds pre-authenticated urls to each jobs.
+//
+func (st *State) preauthUrlsWorker(jobs <- chan JobInfo, jobsWithUrls chan JobInfo) {
 	httpClient := NewHttpClient()
-	memoryBuf := make([]byte, st.maxChunkSize)
+	urls := make(map[string]DXDownloadURL)
 
 	for j := range jobs {
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
-			u := st.createURL(p, httpClient)
-			st.downloadRegPart(httpClient, p, j.wg, u, memoryBuf)
+			j.url = st.createURL(p, urls, httpClient)
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
-			u := DXDownloadURL{
+			j.url = &DXDownloadURL{
 				URL : pLnk.Url,
 				Headers : make(map[string]string, 0),
 			}
-			st.downloadSymlinkPart(httpClient, pLnk, j.wg, u, memoryBuf)
 		}
+
+		jobsWithUrls <- j
+	}
+
+	// we are done adding URLs to each job.
+	close(jobsWithUrls)
+}
+
+func (st *State) worker(id int, jobsWithUrls <-chan JobInfo, jobsDbUpdate chan JobInfo, wg *sync.WaitGroup) {
+	// Create one http client per worker. This should, hopefully, allow
+	// caching open TCP/HTTP connections, reducing startup times.
+	httpClient := NewHttpClient()
+	memoryBuf := make([]byte, st.maxChunkSize)
+
+	for j := range jobsWithUrls {
+		switch j.part.(type) {
+		case DBPartRegular:
+			p := j.part.(DBPartRegular)
+			st.downloadRegPart(httpClient, p, j.wg, *j.url, memoryBuf)
+
+		case DBPartSymlink:
+			pLnk := j.part.(DBPartSymlink)
+			st.downloadSymlinkPart(httpClient, pLnk, j.wg, *j.url, memoryBuf)
+		}
+
+		// move the jobs to the next phase, which is updating the database
+		jobsDbUpdate <- j
+	}
+	wg.Done()
+}
+
+// update the database when a job completes
+func (st *State) dbUpdateWorker(jobsDbUpdate <- chan JobInfo, wg *sync.WaitGroup) {
+	for j := range jobsDbUpdate {
+		st.updateDBPart(j.part)
 	}
 	wg.Done()
 }
@@ -777,15 +786,15 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	// build a job-channel that will hold all the parts. If we make it too small,
 	// we will block before creating the worker threads.
-	cnt_reg := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched != size")
-	cnt_slnk := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched != size")
-	jobs := make(chan JobInfo, cnt_reg + cnt_slnk)
-	var wg sync.WaitGroup
+	cntReg := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched != size")
+	cntSlnk := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched != size")
+	totNumJobs := cntReg + cntSlnk
+	jobs := make(chan JobInfo, totNumJobs)
+	var wgDb sync.WaitGroup
+	var wgDownload sync.WaitGroup
 
 	// create a job for each incomplete data file part
-	st.mutex.Lock()
 	rows, err := st.db.Query("SELECT * FROM manifest_regular_stats WHERE bytes_fetched != size")
-	st.mutex.Unlock()
 	check(err)
 
 	numRows := 0
@@ -796,7 +805,7 @@ func (st *State) DownloadManifestDB(fname string) {
 		check(err)
 		j := JobInfo{
 			part : p,
-			wg : &wg,
+			wg : &wgDownload,
 		}
 		jobs <- j
 		numRows++
@@ -807,9 +816,7 @@ func (st *State) DownloadManifestDB(fname string) {
 	}
 
 	// create a job for each imcomplete data symlink part
-	st.mutex.Lock()
 	rows, err = st.db.Query("SELECT * FROM manifest_symlink_stats WHERE bytes_fetched != size")
-	st.mutex.Unlock()
 	check(err)
 
 	for rows.Next() {
@@ -819,7 +826,7 @@ func (st *State) DownloadManifestDB(fname string) {
 		check(err)
 		j := JobInfo {
 			part : p,
-			wg : &wg,
+			wg : &wgDownload,
 		}
 		jobs <- j
 	}
@@ -828,17 +835,31 @@ func (st *State) DownloadManifestDB(fname string) {
 	// Close the job channel, there will be no more jobs.
 	close(jobs)
 
+	// the preauth thread adds a valid URL to each job.
+	jobsWithUrls := make(chan JobInfo, totNumJobs)
+	go st.preauthUrlsWorker(jobs, jobsWithUrls)
+
+	// the db-update thread updates the database when jobs
+	// complete.
+	jobsDbUpdate := make(chan JobInfo, totNumJobs)
+	wgDb.Add(1)
+	go st.dbUpdateWorker(jobsDbUpdate, &wgDb)
+
 	// start concurrent workers to download the file parts
 	for w := 1; w <= st.opts.NumThreads; w++ {
-		wg.Add(1)
-		go st.worker(w, jobs, &wg)
+		wgDownload.Add(1)
+		go st.worker(w, jobsWithUrls, jobsDbUpdate, &wgDownload)
 	}
 
 	st.InitDownloadStatus()
 	go st.downloadProgressContinuous()
 
-	// wait for all the jobs to be completed
-	wg.Wait()
+	// wait for downloads to complete
+	wgDownload.Wait()
+	close(jobsDbUpdate)
+
+	// wait for database updates to complete
+	wgDb.Wait()
 
 	// completed all downloads
 	PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")

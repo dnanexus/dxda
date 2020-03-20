@@ -10,9 +10,10 @@ dxda=$GOPATH/bin/dxda
 go build -o $dxda $DXDA_ROOT/cmd/dx-download-agent/dx-download-agent.go
 
 echo "creating manifest from the dxfuse_test_data:/correctness directory"
-manifest=$CRNT_DIR/manifest.json.bz2
-rm -f $manifest || true
-python ${DXDA_ROOT}/scripts/create_manifest.py -r /correctness
+manifest=$CRNT_DIR/regular.manifest.json.bz2
+if [[ ! -f $manifest ]]; then
+    python ${DXDA_ROOT}/scripts/create_manifest.py -r /correctness --outfile $manifest
+fi
 
 # download and check
 $dxda download -gc_info $manifest
@@ -43,16 +44,15 @@ if [[ $rc != 0 ]]; then
     exit 1
 fi
 
-echo "Regular files test was successful"
-
-
 echo "Checking large files"
-rm -f $manifest || true
-python ${DXDA_ROOT}/scripts/create_manifest.py -r /large_files
+manifest2=$CRNT_DIR/large_files.manifest.json.bz2
+if [[ ! -f $manifest2 ]]; then
+    python ${DXDA_ROOT}/scripts/create_manifest.py -r /large_files --outfile $manifest2
+fi
 
-$dxda download $manifest
-$dxda inspect $manifest
+$dxda download $manifest2
+$dxda inspect $manifest2
 
-echo "cleanup"
+echo "Regular files test was successful"
 rm -rf large_files correctness
-rm -f *.db *.log *.bz2
+rm -f *.db *.log
