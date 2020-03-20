@@ -99,7 +99,6 @@ func (slnk DBPartSymlink) size() int        { return slnk.Size }
 // JobInfo ...
 type JobInfo struct {
 	part              DBPart
-	wg               *sync.WaitGroup
 	url              *DXDownloadURL
 }
 
@@ -577,7 +576,6 @@ func (st *State) downloadProgressContinuous() {
 func (st *State) downloadSymlinkPart(
 	httpClient *http.Client,
 	p DBPartSymlink,
-	wg *sync.WaitGroup,
 	u DXDownloadURL,
 	memoryBuf []byte) error {
 
@@ -604,7 +602,6 @@ func (st *State) downloadSymlinkPart(
 	_, err = localf.WriteAt(body, p.offset())
 	check(err)
 
-	st.updateDBPart(p)
 	return nil
 }
 
@@ -613,7 +610,6 @@ func (st *State) downloadSymlinkPart(
 func (st *State) downloadRegPartCheckSum(
 	httpClient *http.Client,
 	p DBPartRegular,
-	wg *sync.WaitGroup,
 	u DXDownloadURL,
 	memoryBuf []byte) (bool, error) {
 
@@ -660,19 +656,17 @@ func (st *State) downloadRegPartCheckSum(
 		return false, nil
 	}
 
-	st.updateDBPart(p)
 	return true, nil
 }
 
 func (st *State) downloadRegPart(
 	httpClient *http.Client,
 	p DBPartRegular,
-	wg *sync.WaitGroup,
 	u DXDownloadURL,
 	memoryBuf []byte) error {
 
 	for i := 0 ; i < numRetriesChecksumMismatch; i++ {
-		ok, err := st.downloadRegPartCheckSum(httpClient, p, wg, u, memoryBuf)
+		ok, err := st.downloadRegPartCheckSum(httpClient, p, u, memoryBuf)
 		if err != nil {
 			return err
 		}
@@ -756,11 +750,11 @@ func (st *State) worker(id int, jobsWithUrls <-chan JobInfo, jobsDbUpdate chan J
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
-			st.downloadRegPart(httpClient, p, j.wg, *j.url, memoryBuf)
+			st.downloadRegPart(httpClient, p, *j.url, memoryBuf)
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
-			st.downloadSymlinkPart(httpClient, pLnk, j.wg, *j.url, memoryBuf)
+			st.downloadSymlinkPart(httpClient, pLnk, *j.url, memoryBuf)
 		}
 
 		// move the jobs to the next phase, which is updating the database
@@ -790,8 +784,6 @@ func (st *State) DownloadManifestDB(fname string) {
 	cntSlnk := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched != size")
 	totNumJobs := cntReg + cntSlnk
 	jobs := make(chan JobInfo, totNumJobs)
-	var wgDb sync.WaitGroup
-	var wgDownload sync.WaitGroup
 
 	// create a job for each incomplete data file part
 	rows, err := st.db.Query("SELECT * FROM manifest_regular_stats WHERE bytes_fetched != size")
@@ -805,7 +797,7 @@ func (st *State) DownloadManifestDB(fname string) {
 		check(err)
 		j := JobInfo{
 			part : p,
-			wg : &wgDownload,
+			url : nil,
 		}
 		jobs <- j
 		numRows++
@@ -826,7 +818,7 @@ func (st *State) DownloadManifestDB(fname string) {
 		check(err)
 		j := JobInfo {
 			part : p,
-			wg : &wgDownload,
+			url : nil,
 		}
 		jobs <- j
 	}
@@ -841,11 +833,13 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	// the db-update thread updates the database when jobs
 	// complete.
+	var wgDb sync.WaitGroup
 	jobsDbUpdate := make(chan JobInfo, totNumJobs)
 	wgDb.Add(1)
 	go st.dbUpdateWorker(jobsDbUpdate, &wgDb)
 
 	// start concurrent workers to download the file parts
+	var wgDownload sync.WaitGroup
 	for w := 1; w <= st.opts.NumThreads; w++ {
 		wgDownload.Add(1)
 		go st.worker(w, jobsWithUrls, jobsDbUpdate, &wgDownload)
@@ -1114,9 +1108,7 @@ func (st *State) checkAllRegularFileIntegrity() bool {
 	integrityMsgs := make(chan string, cnt)
 	var wg sync.WaitGroup
 
-	st.mutex.Lock()
 	rows, err := st.db.Query("SELECT * FROM manifest_regular_stats WHERE bytes_fetched == size")
-	st.mutex.Unlock()
 	check(err)
 
 	for rows.Next() {
@@ -1126,7 +1118,6 @@ func (st *State) checkAllRegularFileIntegrity() bool {
 		check(err)
 		j := JobInfo{
 			part : p,
-			wg : &wg,
 		}
 		jobs <- j
 	}
@@ -1166,9 +1157,7 @@ func (st *State) fileCheckSymlinkWorker(id int, jobs <-chan DXFileSymlink, integ
 }
 
 func (st *State) checkAllSymlinkIntegrity() bool {
-	st.mutex.Lock()
 	rows, err := st.db.Query("SELECT * FROM symlinks")
-	st.mutex.Unlock()
 	check(err)
 
 	var allSymlinks []DXFileSymlink
