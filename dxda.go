@@ -191,6 +191,7 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	// Limit the number of threads
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
+//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
 	return &State {
 		dxEnv : dxEnv,
@@ -526,7 +527,7 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 		pauseNs := gcStats.PauseTotalNs
 		numGcCycles := gcStats.NumGC
 
-		gcReport = fmt.Sprintf("  GC (alloc=%d/%d MB, pause=%d ms, #cycles=%d)",
+		gcReport = fmt.Sprintf("   GC (alloc=%d/%d MB, pause=%d ms, #cycles=%d)",
 			bytes2MiB(crntAlloc), bytes2MiB(totalAlloc),
 			pauseNs/1e6, numGcCycles)
 	}
