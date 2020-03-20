@@ -100,6 +100,7 @@ func (slnk DBPartSymlink) size() int        { return slnk.Size }
 type JobInfo struct {
 	part              DBPart
 	url              *DXDownloadURL
+	completeNs        int64
 }
 
 // DownloadStatus ...
@@ -758,16 +759,41 @@ func (st *State) worker(id int, jobsWithUrls <-chan JobInfo, jobsDbUpdate chan J
 		}
 
 		// move the jobs to the next phase, which is updating the database
+		j.completeNs = time.Now().UnixNano()
 		jobsDbUpdate <- j
 	}
 	wg.Done()
 }
 
-// update the database when a job completes
-func (st *State) dbUpdateWorker(jobsDbUpdate <- chan JobInfo, wg *sync.WaitGroup) {
-	for j := range jobsDbUpdate {
-		st.updateDBPart(j.part)
+func (st *State) dbApplyBulkUpdates(completedJobs []JobInfo) {
+	if len(completedJobs) == 0 {
+		return
 	}
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
+	txn, err := st.db.Begin()
+	check(err)
+	defer txn.Commit()
+
+	for _, j := range(completedJobs) {
+		st.updateDBPart(txn, j.part, j.completeNs)
+	}
+}
+
+// update the database when a job completes
+// Do this in bulk
+func (st *State) dbUpdateWorker(jobsDbUpdate <- chan JobInfo, wg *sync.WaitGroup) {
+	var accu []JobInfo
+	for j := range jobsDbUpdate {
+		accu = append(accu, j)
+		if len(accu) == 10 {
+			st.dbApplyBulkUpdates(accu)
+			accu = make([]JobInfo, 0)
+		}
+	}
+	st.dbApplyBulkUpdates(accu)
+
 	wg.Done()
 }
 
@@ -863,31 +889,21 @@ func (st *State) DownloadManifestDB(fname string) {
 
 
 // UpdateDBPart.
-func (st *State) updateDBPart(p DBPart) {
-	st.mutex.Lock()
-	defer st.mutex.Unlock()
-
-	tx, err := st.db.Begin()
-	check(err)
-	defer tx.Commit()
-
-	now := time.Now().UnixNano()
-
+func (st *State) updateDBPart(txn *sql.Tx, p DBPart, tsNanoSec int64) {
 	switch p.(type) {
 	case DBPartRegular:
 		reg := p.(DBPartRegular)
-		_, err = tx.Exec(fmt.Sprintf(
+		_, err := txn.Exec(fmt.Sprintf(
 			"UPDATE manifest_regular_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
-			reg.Size, now, reg.FileId, reg.PartId))
+			reg.Size, tsNanoSec, reg.FileId, reg.PartId))
 		check(err)
 
 	case DBPartSymlink:
 		slnk := p.(DBPartSymlink)
-		_, err = tx.Exec(fmt.Sprintf(
+		_, err := txn.Exec(fmt.Sprintf(
 			"UPDATE manifest_symlink_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
-			slnk.Size, now, slnk.FileId, slnk.PartId))
+			slnk.Size, tsNanoSec, slnk.FileId, slnk.PartId))
 		check(err)
-
 	}
 }
 
