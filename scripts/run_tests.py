@@ -14,13 +14,13 @@ from dxpy.exceptions import DXJobFailureError
 
 # The list of instance types to test on. We don't want too many, because it will be expensive.
 # We are trying to take a representative from small, medium, and large instances.
-aws_ladder = {
+aws_regular_instances = {
     "small" : ["mem1_ssd1_v2_x4"],
     "large" : ["mem1_ssd1_v2_x4", "mem1_ssd1_v2_x16", "mem3_ssd1_v2_x32"]
 }
 
 # AWS instances
-aws_large_data = {
+aws_large_instances = {
     # c5d.18xlarge with 5.6 TiB of local storage and 25 Gbps networking.
     # "small" : ["mem1_ssd2_v2_x72"],
 
@@ -31,11 +31,11 @@ aws_large_data = {
     "large" : ["mem3_ssd3_x24"]
 }
 
-azure_ladder = {
+azure_regular_instances = {
     "small" : ["azure:mem1_ssd1_x4"],
     "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"]
 }
-azure_large_data = {
+azure_large_instances = {
     "small" : ["azure:mem3_ssd1_x16"],
     "large" : ["azure:mem3_ssd1_x16"]
 }
@@ -103,7 +103,7 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch_and_wait(project, applet, manifest, instance_types, debug_flag):
+def launch_and_wait(project, applet, manifest, instance_types, ssh_flag):
     print("instance types={}".format(instance_types))
     # Run the applets
     jobs=[]
@@ -113,7 +113,7 @@ def launch_and_wait(project, applet, manifest, instance_types, debug_flag):
     }
 
     run_kwargs = {}
-    if debug_flag:
+    if ssh_flag:
         run_kwargs = {
             "allow_ssh" : [ "*" ]
         }
@@ -132,10 +132,10 @@ def launch_and_wait(project, applet, manifest, instance_types, debug_flag):
     return jobs
 
 
-def run_correctness(dx_proj, instance_types, debug_flag):
+def run_correctness(dx_proj, instance_types, ssh_flag):
     applet = lookup_applet("dxda_correctness", dx_proj, "/applets")
-    manifest = lookup_file("correctness.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, debug_flag)
+    manifest = lookup_file("correctness.manifest.json.bz2", dx_proj, "/dxda")
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, ssh_flag)
 
     # extract results
     for j in jobs:
@@ -146,39 +146,57 @@ def run_correctness(dx_proj, instance_types, debug_flag):
 
 
 
-def run_benchmark(dx_proj, instance_types, debug_flag):
-    applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
-    manifest = lookup_file("benchmark.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, debug_flag)
-
-    # extract results
+# extract results
+def extract_benchmark_results(jobs):
     for j in jobs:
         desc = j.describe()
         i_type = desc["systemRequirements"]["*"]["instanceType"]
         result = desc['output']['runtime']
         print("{}, {}".format(i_type, result))
 
-
-def run_large_data(dx_proj, instance_types, debug_flag):
+def run_benchmark(dx_proj, instance_types, ssh_flag):
     applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
-    manifest = lookup_file("ukbb_cram_2TB.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, debug_flag)
+    manifest = lookup_file("benchmark.manifest.json.bz2", dx_proj, "/dxda")
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, ssh_flag)
+    extract_benchmark_results(jobs)
 
-    # extract results
-    for j in jobs:
-        desc = j.describe()
-        i_type = desc["systemRequirements"]["*"]["instanceType"]
-        result = desc['output']['runtime']
-        print("{}, {}".format(i_type, result))
+def run_large_data(dx_proj, instance_types, ssh_flag):
+    applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
+    manifest = lookup_file("ukbb_cram_2TB.manifest.json.bz2", dx_proj, "/dxda")
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, ssh_flag)
+    extract_benchmark_results(jobs)
 
+def run_one_big_file(dx_proj, instance_types, ssh_flag):
+    applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
+    manifest = lookup_file("one_64GiB_file.manifest.json.bz2", dx_proj, "/dxda")
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, ssh_flag)
+    extract_benchmark_results(jobs)
+
+
+def is_large(test_name):
+    return ((test_name == "large_data") or
+            (test_name == "one_big_file"))
+
+def choose_instance_scale(region, test_name):
+    if region.startswith("aws:"):
+        if is_large(test_name):
+            return aws_large_instances
+        else:
+            return aws_regular_instances
+    if region.startswith("azure"):
+        if is_large(test_name):
+            return azure_large_instances
+        else:
+            return azure_regular_instances
+    raise Exception("unknown region {}".format(region))
 
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxda")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
-    argparser.add_argument("--debug", help="Various applet debugging options, currently, allow ssh access",
+    argparser.add_argument("--ssh", help="allow ssh access to running jobs",
                            action="store_true", default=False)
-    argparser.add_argument("--test", help="which testing suite to run [bench, correct, large_data]")
+    argparser.add_argument("--test", help="which testing suite to run [bench, correct, large_data, one_big_file]")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
     argparser.add_argument("--verbose", help="run the tests in verbose mode",
@@ -188,19 +206,7 @@ def main():
 
     # figure out which region we are operating in
     region = dx_proj.describe()["region"]
-    scale = None
-    if region.startswith("aws:"):
-        if args.test == "large_data":
-            scale = aws_large_data
-        else:
-            scale = aws_ladder
-    elif region.startswith("azure"):
-        if args.test == "large_data":
-            scale = azure_large_data
-        else:
-            scale = azure_ladder
-    else:
-        raise Exception("unknown region {}".format(region))
+    scale = choose_instance_scale(region, args.test)
 
     if args.size in scale.keys():
         instance_types = scale[args.size]
@@ -212,11 +218,13 @@ def main():
         print("Test not specified")
         exit(1)
     if args.test.startswith("bench"):
-        run_correctness(dx_proj, instance_types, args.debug)
+        run_correctness(dx_proj, instance_types, args.ssh)
     elif args.test.startswith("correct"):
-        run_benchmark(dx_proj, instance_types, args.debug)
+        run_benchmark(dx_proj, instance_types, args.ssh)
     elif args.test.startswith("large_data"):
-        run_large_data(dx_proj, instance_types, args.debug)
+        run_large_data(dx_proj, instance_types, args.ssh)
+    elif args.test.startswith("one_big_file"):
+        run_one_big_file(dx_proj, instance_types, args.ssh)
     else:
         print("Unknown test {}".format(args.test))
         exit(1)
