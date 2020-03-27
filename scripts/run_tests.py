@@ -19,10 +19,15 @@ aws_ladder = {
     "large" : ["mem1_ssd1_v2_x4", "mem1_ssd1_v2_x16", "mem3_ssd1_v2_x32"]
 }
 
-# mem1_ssd2_v2_x72 : AWS c5d.18xlarge instance with 5.6 TiB of storage and 25 Gbps networking.
-# mem1_ssd2_v2_x36 : AWS c5d.9xlarge  instance with 2.8 TiB of storage and 10 Gbps networking.
+# AWS instances
 aws_large_data = {
+    # c5d.18xlarge with 5.6 TiB of local storage and 25 Gbps networking.
+    # "small" : ["mem1_ssd2_v2_x72"],
+
+    # c5d.9xlarge  with 2.8 TiB of local storage and 10 Gbps networking.
     "small" : ["mem1_ssd2_v2_x36"],
+
+    # dx_i3en.6xlarge with 15 TiB of local storage, and 25 Gbps networking
     "large" : ["mem3_ssd3_x24"]
 }
 

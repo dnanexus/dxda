@@ -46,4 +46,4 @@ echo "Symlink test was successful"
 
 echo "cleanup"
 rm -rf symlinks
-rm -f *.db *.log *.bz2
+rm -f $manifest.*.db $manifest.*.log
