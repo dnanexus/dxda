@@ -23,7 +23,7 @@ aws_ladder = {
 # mem1_ssd2_v2_x36 : AWS c5d.9xlarge  instance with 2.8 TiB of storage and 10 Gbps networking.
 aws_large_data = {
     "small" : ["mem1_ssd2_v2_x36"],
-    "large" : ["mem3_ssd1_v2_x32"]
+    "large" : ["mem3_ssd3_x24"]
 }
 
 azure_ladder = {
@@ -144,7 +144,7 @@ def run_correctness(dx_proj, instance_types, debug_flag):
 def run_benchmark(dx_proj, instance_types, debug_flag):
     applet = lookup_applet("dxda_benchmark", dx_proj, "/applets")
     manifest = lookup_file("benchmark.manifest.json.bz2", dx_proj, "/")
-    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types. debug_flag)
+    jobs = launch_and_wait(dx_proj, applet, manifest, instance_types, debug_flag)
 
     # extract results
     for j in jobs:

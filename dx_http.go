@@ -12,18 +12,14 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
-
-	"github.com/hashicorp/go-cleanhttp"     // required by go-retryablehttp
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 const (
-	minRetryTime = 1   // seconds
-	maxRetryTime = 120 // seconds
 	maxRetryCount = 10
 	userAgent = "dxda: DNAnexus download agent"
 	reqTimeout = 15  // seconds
@@ -86,18 +82,16 @@ func parseStatus(status string) (int, string) {
 
 // Good status is in the range 2xx
 func isGood(status int) bool {
-	switch status {
-	case 200, 201, 202, 203, 204, 205, 206:
-		return true
-	default:
-		return false
-	}
+	return (200 <= status && status < 300)
 }
 
 
-// TODO: Investigate more sophsticated handling of these error codes ala
-// https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
-func isRetryable(requestType string, status int) bool {
+func isRetryable(ctx context.Context, requestType string, status int) bool {
+	// do not retry on context.Canceled or context.DeadlineExceeded
+	if ctx.Err() != nil {
+		return false
+	}
+
 	switch status {
 	case 408:
 		// Request timeout
@@ -142,23 +136,34 @@ func isRetryable(requestType string, status int) bool {
 	return false
 }
 
+
+// DefaultPooledTransport returns a new http.Transport with similar default
+// values to http.DefaultTransport. Do not use this for transient transports as
+// it can leak file descriptors over time. Only use this for transports that
+// will be re-used for the same host(s).
+func defaultPooledTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			DualStack: true,
+		}).DialContext,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ReadBufferSize : 64 * KiB,
+	}
+}
+
 // These clients are intended for reuse in the same host. Throwing them
 // away will gradually leak file descriptors.
-func NewHttpClient(pooled bool) *retryablehttp.Client {
+func NewHttpClient() *http.Client {
 	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
 	if localCertFile == "" {
-		client := cleanhttp.DefaultClient()
-		if pooled {
-			client = cleanhttp.DefaultPooledClient()
-		}
-		return &retryablehttp.Client{
-			HTTPClient:   client,
-			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-			RetryWaitMin: minRetryTime * time.Second,
-			RetryWaitMax: maxRetryTime * time.Second,
-			RetryMax:     maxRetryCount,
-			CheckRetry:   retryablehttp.DefaultRetryPolicy,
-			Backoff:      retryablehttp.DefaultBackoff,
+		return &http.Client{
+			Transport: defaultPooledTransport(),
 		}
 	}
 
@@ -188,97 +193,44 @@ func NewHttpClient(pooled bool) *retryablehttp.Client {
 		RootCAs:            rootCAs,
 	}
 
-	tr := cleanhttp.DefaultTransport()
-	if pooled {
-		tr = cleanhttp.DefaultPooledTransport()
-	}
+	tr := defaultPooledTransport()
 	tr.TLSClientConfig = config
-
-	return &retryablehttp.Client{
-		HTTPClient:   &http.Client{Transport: tr},
-		Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-		RetryWaitMin: minRetryTime * time.Second,
-		RetryWaitMax: maxRetryTime * time.Second,
-		RetryMax:     maxRetryCount,
-		CheckRetry:   retryablehttp.DefaultRetryPolicy,
-		Backoff:      retryablehttp.DefaultBackoff,
-	}
+	return &http.Client{Transport: tr}
 }
 
-// Bypass the retryablehttp library, it is causing an error.
-//
-// The error happens when doing an http PUT for a zero sized byte array.
-// The library somehow mangles the aws signature key, causing AWS to
-// reject the request with a 403 Forbidden code.
-func dxHttpRequestCoreBypass(
+func dxHttpRequestCore(
 	ctx context.Context,
-	client *retryablehttp.Client,
+	client *http.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) ( []byte, error) {
+	data []byte) ( *http.Response, error) {
 	var dataReader io.Reader
 	if data != nil {
 		dataReader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(requestType, url, dataReader)
+	req, err := http.NewRequestWithContext(ctx, requestType, url, dataReader)
 	if err != nil {
 		return nil, err
 	}
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	//log.Printf("dxHttpRequestCoreBypass req=%v", req)
 
-	resp, err := client.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	body, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	statusCode, statusHumanReadable := parseStatus(resp.Status)
-
-	// If the status is not in the 200-299 range, an error occured.
-	if !(isGood(statusCode)) {
-		httpError := HttpError{
-			Message : body,
-			StatusCode : statusCode,
-			StatusHumanReadable : statusHumanReadable,
-		}
-		return nil, &httpError
-	}
-
-	// good status
-	return body, nil
-}
-
-
-func dxHttpRequestCore(
-	ctx context.Context,
-	client *retryablehttp.Client,
-	requestType string,
-	url string,
-	headers map[string]string,
-	data []byte) ( []byte, error) {
-	req, err := retryablehttp.NewRequest(requestType, url, data)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
 	resp, err := client.Do(req)
-
 	if err != nil {
+		// read the response body so we can reuse this connection.
+		_, _ = io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
 		return nil, err
 	}
-	body, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
+
 	statusCode, statusHumanReadable := parseStatus(resp.Status)
 
 	// If the status is not in the 200-299 range, an error occured.
 	if !(isGood(statusCode)) {
+		body, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 		httpError := HttpError{
 			Message : body,
 			StatusCode : statusCode,
@@ -288,7 +240,7 @@ func dxHttpRequestCore(
 	}
 
 	// good status
-	return body, nil
+	return resp, nil
 }
 
 
@@ -296,12 +248,12 @@ func dxHttpRequestCore(
 //
 func DxHttpRequest(
 	ctx context.Context,
-	client *retryablehttp.Client,
+	client *http.Client,
 	numRetries int,
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) ([]byte, error) {
+	data []byte) (*http.Response, error) {
 
 	attemptTimeout := attemptTimeoutInit
 	var tCnt int
@@ -313,29 +265,23 @@ func DxHttpRequest(
 			attemptTimeout = MinInt(2 * attemptTimeout, attemptTimeoutMax)
 		}
 
-		var body []byte
-		var err error
-		if requestType == "PUT" && (data == nil || len(data) == 0) {
-			// circumvent an error in the retryablehttp library
-			body, err = dxHttpRequestCoreBypass(ctx, client, requestType, url, headers, data)
-		} else {
-			body, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
-		}
+		response, err := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
 		if err == nil {
 			// http request went well, return the body
-			return body, nil
+			return response, nil
 		}
 
 		// triage the error
 		switch err.(type) {
 		case *HttpError:
 			hErr := err.(*HttpError)
-			if !isRetryable(requestType, hErr.StatusCode) {
+			if !isRetryable(ctx, requestType, hErr.StatusCode) {
 				// A non-retryable error, return the http error
 				return nil, hErr
 			}
 			// A retryable http error.
 			continue
+
 		default:
 			// connection error/timeout error/library error. This is non retryable
 			log.Printf(err.Error())
@@ -353,7 +299,7 @@ func DxHttpRequest(
 //
 func DxAPI(
 	ctx context.Context,
-	client *retryablehttp.Client,
+	client *http.Client,
 	numRetries int,
 	dxEnv *DXEnvironment,
 	api string,
@@ -380,7 +326,9 @@ func DxAPI(
 	})
 	defer timer.Stop()
 
-	body, err := DxHttpRequest(ctx2, client, numRetries, "POST", url, headers, []byte(payload))
+	resp, err := DxHttpRequest(ctx2, client, numRetries, "POST", url, headers, []byte(payload))
+	body, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 
 	if err != nil {
 		switch err.(type) {
@@ -398,7 +346,7 @@ func DxAPI(
 				dxErr.Message = dxErrJson.E.Message
 			} else {
 				log.Printf("response is larger than maximum, %d > %d",
-					len(body), maxSizeResponse)
+					len(hErr.Message), maxSizeResponse)
 			}
 
 			// the status can just be copied from the http error.

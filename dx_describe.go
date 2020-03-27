@@ -3,8 +3,7 @@ package dxda
 import (
 	"context"
 	"encoding/json"
-
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
+	"net/http"
 )
 
 // Limit on the number of objects that the bulk-describe API can take
@@ -76,7 +75,7 @@ type DxDescribeRaw struct {
 // Describe a large number of file-ids in one API call.
 func submit(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *DXEnvironment,
 	fileIds []string) (map[string]DxDescribeDataObject, error) {
 
@@ -151,7 +150,7 @@ func submit(
 
 func DxDescribeBulkObjects(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *DXEnvironment,
 	objIds []string) (map[string]DxDescribeDataObject, error) {
 	var gMap = make(map[string]DxDescribeDataObject)
