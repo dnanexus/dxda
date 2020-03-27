@@ -600,7 +600,6 @@ func (st *State) downloadSymlinkPart(
 	check(err)
 	body := memoryBuf[:p.Size]
 
-
 	_, err = localf.WriteAt(body, p.offset())
 	check(err)
 
