@@ -31,11 +31,6 @@ const (
 	minNumThreads = 2
 	maxNumThreads = 32
 
-	// handling the case of receiving the less data than we
-	// asked for
-	badLengthTimeout = 5  // seconds
-	badLengthNumRetries = 3
-
 	numRetries = 10
 	numRetriesChecksumMismatch = 3
 	secondsInYear int = 60 * 60 * 24 * 365
@@ -596,7 +591,7 @@ func (st *State) downloadSymlinkPart(
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
-	err = st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), p.Size, memoryBuf)
+	err = DxHttpRequestData(context.TODO(), httpClient, "GET", u.URL, headers, []byte("{}"), p.Size, memoryBuf)
 	check(err)
 	body := memoryBuf[:p.Size]
 
@@ -638,7 +633,7 @@ func (st *State) downloadRegPartCheckSum(
 			headers[k] = v
 		}
 
-		err := st.dxHttpRequestData(httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize, memoryBuf)
+		err := DxHttpRequestData(context.TODO(), httpClient, "GET", u.URL, headers, []byte("{}"), chunkSize, memoryBuf)
 		check(err)
 		body := memoryBuf[:chunkSize]
 
@@ -967,50 +962,6 @@ func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 	check(err)
 }
 
-
-// Add retries around the core http-request method
-//
-func (st *State) dxHttpRequestData(
-	httpClient *http.Client,
-	requestType string,
-	url string,
-	headers map[string]string,
-	data []byte,
-	dataLen int,
-	memoryBuf []byte) error {
-
-	// Safety procedure to force timeout to prevent hanging
-	ctx, cancel := context.WithCancel(context.TODO())
-	timer := time.AfterFunc(requestOverallTimout, func() {
-		cancel()
-	})
-	defer timer.Stop()
-
-	for i := 0; i < badLengthNumRetries; i ++ {
-		resp, err := DxHttpRequest(ctx, httpClient, numRetries, requestType, url, headers, data)
-		if err != nil {
-			return err
-		}
-
-		//body, _ := ioutil.ReadAll(resp.Body)
-		// we are saving an allocation by using a pre-allocated
-		// buffer.
-		recvLen, _ := io.ReadAtLeast(resp.Body, memoryBuf, dataLen)
-		resp.Body.Close()
-
-		// check that the length is correct
-		if recvLen != dataLen {
-			// Note: it would be preferable to collect partial results and concatenate them.
-			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, dataLen)
-			time.Sleep(time.Duration(badLengthTimeout) * time.Second)
-			continue
-		}
-		return nil
-	}
-
-	return fmt.Errorf("%s request to %s failed after %d attempts",
-		requestType, url, badLengthNumRetries)
-}
 
 // -----------------------------------------
 // inspect: validation of downloaded parts
