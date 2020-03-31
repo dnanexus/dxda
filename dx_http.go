@@ -26,6 +26,11 @@ const (
 	attemptTimeoutInit = 2 // seconds
 	attemptTimeoutMax = 600 // seconds
 	maxSizeResponse = 16 * 1024
+
+	// handling the case of receiving less data than we
+	// asked for
+	badLengthTimeout = 5  // seconds
+	badLengthNumRetries = 3
 )
 
 type HttpError struct {
@@ -294,6 +299,54 @@ func DxHttpRequest(
 	return nil, err
 }
 
+
+// Read data from a remote URL.
+//
+// Add retries around the core http-request method, especially in the case of
+// short reads.
+//
+func DxHttpRequestData(
+	ctx context.Context,
+	httpClient *http.Client,
+	requestType string,
+	url string,
+	headers map[string]string,
+	data []byte,
+	dataLen int,
+	memoryBuf []byte) error {
+
+	// Safety procedure to force timeout to prevent hanging
+	ctx2, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(requestOverallTimout, func() {
+		cancel()
+	})
+	defer timer.Stop()
+
+	for i := 0; i < badLengthNumRetries; i++ {
+		resp, err := DxHttpRequest(ctx2, httpClient, numRetries, requestType, url, headers, data)
+		if err != nil {
+			return err
+		}
+
+		//body, _ := ioutil.ReadAll(resp.Body)
+		// we are saving an allocation by using a pre-allocated
+		// buffer.
+		recvLen, _ := io.ReadAtLeast(resp.Body, memoryBuf, dataLen)
+		resp.Body.Close()
+
+		// check that the length is correct
+		if recvLen != dataLen {
+			// Note: it would be preferable to collect partial results and concatenate them.
+			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, dataLen)
+			time.Sleep(time.Duration(badLengthTimeout) * time.Second)
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("%s request to %s failed after %d attempts",
+		requestType, url, badLengthNumRetries)
+}
 
 // DxAPI - Function to wrap a generic API call to DNAnexus
 //
