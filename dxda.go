@@ -118,7 +118,7 @@ type State struct {
 	opts             Opts
 	mutex            sync.Mutex
 	db              *sql.DB
-	ds              *DownloadStatus
+	ds              *DownloadStatus  // only the progress report thread accesses this field
 	timeOfLastError  int
 	maxChunkSize     int64
 }
@@ -537,19 +537,32 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 }
 
 // A loop that reports on download progress periodically.
-func (st *State) downloadProgressContinuous() {
+func (st *State) downloadProgressContinuous(wg *sync.WaitGroup) {
 	// Start time of the measurements, in nano seconds
 	startTime := time.Now()
+	lastReportTs := startTime
 
-	for st.ds.NumPartsComplete < st.ds.NumParts {
+	// only the progress-report thread has access to the "ds" state
+	// field. That is why no locking is required here.
+	for true {
 		// Sleep for a number of seconds, so as to not flood the screen
 		// with messages. This also substantially limits the number
 		// of database queries.
-		time.Sleep(st.ds.ProgressInterval)
+		time.Sleep(1 * time.Second)
+		if st.ds.NumPartsComplete >= st.ds.NumParts {
+			// signal that the thread is done
+			wg.Done()
+			return
+		}
+
+		now := time.Now()
+		if now.Before(lastReportTs.Add(st.ds.ProgressInterval)) {
+			continue
+		}
+		lastReportTs = now
 
 		// If we just started the measurements, we have a short
 		// history to examine. Limit the window size accordingly.
-		now := time.Now()
 		deltaNanoSec := now.UnixNano() - startTime.UnixNano()
 		if deltaNanoSec > st.ds.MaxWindowSize {
 			deltaNanoSec = st.ds.MaxWindowSize
@@ -866,8 +879,9 @@ func (st *State) DownloadManifestDB(fname string) {
 		go st.worker(w, jobsWithUrls, jobsDbUpdate, &wgDownload)
 	}
 
+	var wgProgressReport sync.WaitGroup
 	st.InitDownloadStatus()
-	go st.downloadProgressContinuous()
+	go st.downloadProgressContinuous(&wgProgressReport)
 
 	// wait for downloads to complete
 	wgDownload.Wait()
@@ -875,6 +889,9 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	// wait for database updates to complete
 	wgDb.Wait()
+
+	// wait for progress report thread
+	wgProgressReport.Wait()
 
 	// completed all downloads
 	PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
