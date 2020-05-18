@@ -405,12 +405,11 @@ func DxAPI(
 			dxErr.HttpCodeHumanReadable = hErr.StatusHumanReadable
 			return nil, &dxErr
 		}
-	body, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-
 		// non dnanexus error.
 		return nil, err
 	}
+	body, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 
 	// good return case
 	return body, nil
