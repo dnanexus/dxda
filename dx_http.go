@@ -380,9 +380,6 @@ func DxAPI(
 	defer timer.Stop()
 
 	resp, err := DxHttpRequest(ctx2, client, numRetries, "POST", url, headers, []byte(payload))
-	body, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-
 	if err != nil {
 		switch err.(type) {
 		case *HttpError:
@@ -408,10 +405,11 @@ func DxAPI(
 			dxErr.HttpCodeHumanReadable = hErr.StatusHumanReadable
 			return nil, &dxErr
 		}
-
 		// non dnanexus error.
 		return nil, err
 	}
+	body, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 
 	// good return case
 	return body, nil
