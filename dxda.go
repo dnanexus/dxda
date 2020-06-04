@@ -333,9 +333,9 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	statsFname := fname + ".stats.db?_busy_timeout=60000&cache=shared&mode=rwc"
 	os.Remove(statsFname)
-	db, err := sql.Open("sqlite3", statsFname)
-	check(err)
-	defer db.Close()
+	// db, err := sql.Open("sqlite3", statsFname)
+	// check(err)
+	// defer db.Close()
 
 	sqlStmt := `
 	CREATE TABLE manifest_regular_stats (
@@ -351,7 +351,7 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
                 download_done_time integer
 	);
 	`
-	_, err = db.Exec(sqlStmt)
+	_, err = st.db.Exec(sqlStmt)
 	check(err)
 
 	// symbolic link parts do not have md5 checksums, and they
@@ -370,7 +370,7 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
                 url text
 	);
 	`
-	_, err = db.Exec(sqlStmt)
+	_, err = st.db.Exec(sqlStmt)
 	check(err)
 
 	// create a table for all the symlinks. This is the place
@@ -387,10 +387,10 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	        md5     text
 	);
 	`
-	_, err = db.Exec(sqlStmt)
+	_, err = st.db.Exec(sqlStmt)
 	check(err)
 
-	txn, err := db.Begin()
+	txn, err := st.db.Begin()
 	check(err)
 
 	// Regular files
