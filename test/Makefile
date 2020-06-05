@@ -1,9 +1,13 @@
-DXDA_ROOT=/go/src/github.com/dnanexus/dxda
+DXDA_ROOT=/development/dxda
 
-all : correctness benchmark
+all : prep_dx_env correctness benchmark
 
 dxda :
 	go build -o /go/bin/dx-download-agent ${DXDA_ROOT}/cmd/dx-download-agent/dx-download-agent.go
+
+prep_dx_env:
+	dx select dxfuse_test_data
+	dx mkdir -p /applets
 
 correctness: dxda
 	mkdir -p dxda_correctness/resources/usr/bin
@@ -19,7 +23,6 @@ benchmark: dxda
 manifests: correctness_manifest
 
 correctness_manifest:
-	dx select dxfuse_test_data
 	rm -f manifest.json.bz2
 	python ${DXDA_ROOT}/scripts/create_manifest.py -r /correctness
 	mv manifest.json.bz2 correctness.manifest.json.bz2

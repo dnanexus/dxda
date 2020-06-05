@@ -19,6 +19,8 @@ type downloadCmd struct {
 	gcInfo bool
 }
 
+var err error
+
 const downloadUsage = "dx-download-agent download [-max_threads=N] <manifest.json.bz2>"
 
 func (*downloadCmd) Name() string     { return "download" }
