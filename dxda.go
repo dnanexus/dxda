@@ -36,6 +36,8 @@ const (
 	secondsInYear int = 60 * 60 * 24 * 365
 )
 
+var err error
+
 // DXDownloadURL ...
 type DXDownloadURL struct {
 	URL     string            `json:"url"`
