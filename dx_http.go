@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"strings"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -16,45 +15,45 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	maxRetryCount = 10
-	userAgent = "dxda: DNAnexus download agent"
-	reqTimeout = 15  // seconds
-	attemptTimeoutInit = 2 // seconds
-	attemptTimeoutMax = 600 // seconds
-	maxSizeResponse = 16 * 1024
+	maxRetryCount      = 10
+	userAgent          = "dxda: DNAnexus download agent"
+	reqTimeout         = 15  // seconds
+	attemptTimeoutInit = 2   // seconds
+	attemptTimeoutMax  = 600 // seconds
+	maxSizeResponse    = 16 * 1024
 
 	// handling the case of receiving less data than we
 	// asked for
-	badLengthTimeout = 5  // seconds
+	badLengthTimeout    = 5 // seconds
 	badLengthNumRetries = 3
 )
 
 type HttpError struct {
-	Message []byte
-	StatusCode int
+	Message             []byte
+	StatusCode          int
 	StatusHumanReadable string
 }
 
 type DxErrorJsonInternal struct {
-	EType    string `json:"type"`
-	Message  string `json:"message"`
+	EType   string `json:"type"`
+	Message string `json:"message"`
 }
 
 type DxErrorJson struct {
-	E  DxErrorJsonInternal `json:"error"`
+	E DxErrorJsonInternal `json:"error"`
 }
 
 type DxError struct {
-	EType    string
-	Message  string
-	HttpCode int
+	EType                 string
+	Message               string
+	HttpCode              int
 	HttpCodeHumanReadable string
 }
-
 
 // implement the error interface
 func (hErr *HttpError) Error() string {
@@ -89,7 +88,6 @@ func parseStatus(status string) (int, string) {
 func isGood(status int) bool {
 	return (200 <= status && status < 300)
 }
-
 
 func isRetryable(ctx context.Context, requestType string, status int) bool {
 	// do not retry on context.Canceled or context.DeadlineExceeded
@@ -128,6 +126,13 @@ func isRetryable(ctx context.Context, requestType string, status int) bool {
 		return true
 	}
 
+	// Bad gateway
+	// Sometimes caused by s3 closing the connection to the worker's
+	// download proxy. Retryable inside a job.
+	if status == 502 && os.Getenv("DX_JOB_ID") != "" {
+		return true
+	}
+
 	if requestType == "PUT" {
 		// We are uploading data.
 		switch status {
@@ -140,7 +145,6 @@ func isRetryable(ctx context.Context, requestType string, status int) bool {
 
 	return false
 }
-
 
 // DefaultPooledTransport returns a new http.Transport with similar default
 // values to http.DefaultTransport. Do not use this for transient transports as
@@ -158,7 +162,7 @@ func defaultPooledTransport() *http.Transport {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		ReadBufferSize : 64 * KiB,
+		ReadBufferSize:        64 * KiB,
 	}
 }
 
@@ -209,7 +213,7 @@ func dxHttpRequestCore(
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) ( *http.Response, error) {
+	data []byte) (*http.Response, error) {
 	var dataReader io.Reader
 	if data != nil {
 		dataReader = bytes.NewReader(data)
@@ -237,9 +241,9 @@ func dxHttpRequestCore(
 		body, _ := ioutil.ReadAll(resp.Body)
 		resp.Body.Close()
 		httpError := HttpError{
-			Message : body,
-			StatusCode : statusCode,
-			StatusHumanReadable : statusHumanReadable,
+			Message:             body,
+			StatusCode:          statusCode,
+			StatusHumanReadable: statusHumanReadable,
 		}
 		return nil, &httpError
 	}
@@ -247,7 +251,6 @@ func dxHttpRequestCore(
 	// good status
 	return resp, nil
 }
-
 
 // Add retries around the core http-request method
 //
@@ -264,10 +267,10 @@ func DxHttpRequest(
 	var tCnt int
 	var err error
 	for tCnt = 0; tCnt < numRetries; tCnt++ {
-		if (tCnt > 0) {
+		if tCnt > 0 {
 			// sleep before retrying. Use bounded exponential backoff.
 			time.Sleep(time.Duration(attemptTimeout) * time.Second)
-			attemptTimeout = MinInt(2 * attemptTimeout, attemptTimeoutMax)
+			attemptTimeout = MinInt(2*attemptTimeout, attemptTimeoutMax)
 		}
 
 		response, err := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
@@ -298,7 +301,6 @@ func DxHttpRequest(
 		requestType, url, tCnt, err.Error())
 	return nil, err
 }
-
 
 // Read data from a remote URL.
 //
@@ -357,12 +359,12 @@ func DxAPI(
 	dxEnv *DXEnvironment,
 	api string,
 	payload string) ([]byte, error) {
-	if (dxEnv.Token == "") {
+	if dxEnv.Token == "" {
 		err := errors.New("The token is not set. This may be because the environment isn't set.")
 		return nil, err
 	}
 	headers := map[string]string{
-		"User-Agent":   userAgent,
+		"User-Agent":    userAgent,
 		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.Token),
 		"Content-Type":  "application/json",
 	}
