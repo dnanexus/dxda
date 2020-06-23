@@ -3,6 +3,7 @@ package dxda
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -131,6 +132,7 @@ func submit(
 				MD5:   *descRaw.MD5,
 				Drive: *descRaw.Drive,
 			}
+			fmt.Printf("DRIVE: %s\n", *descRaw.Drive)
 		}
 
 		desc := DxDescribeDataObject{
