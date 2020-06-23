@@ -13,9 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"runtime"
@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
+	_ "github.com/mattn/go-sqlite3" // Following canonical example on go-sqlite3 'simple.go'
 )
 
 const (
@@ -31,9 +31,9 @@ const (
 	minNumThreads = 2
 	maxNumThreads = 32
 
-	numRetries = 10
-	numRetriesChecksumMismatch = 3
-	secondsInYear int = 60 * 60 * 24 * 365
+	numRetries                     = 10
+	numRetriesChecksumMismatch     = 3
+	secondsInYear              int = 60 * 60 * 24 * 365
 )
 
 var err error
@@ -48,10 +48,12 @@ type DXDownloadURL struct {
 // 1) part of a regular file
 // 2) part of symbolic link (a web address)
 type DBPart interface {
-	folder()   string
+	folder() string
+	fileId() string
 	fileName() string
-	offset()   int64
-	size()     int
+	offset() int64
+	project() string
+	size() int
 }
 
 // Part of a dnanexus file
@@ -67,8 +69,11 @@ type DBPartRegular struct {
 	BytesFetched     int
 	DownloadDoneTime int64 // The time when it completed downloading
 }
+
 func (reg DBPartRegular) folder() string   { return reg.Folder }
 func (reg DBPartRegular) fileName() string { return reg.FileName }
+func (reg DBPartRegular) fileId() string   { return reg.FileId }
+func (reg DBPartRegular) project() string  { return reg.Project }
 func (reg DBPartRegular) offset() int64    { return reg.Offset }
 func (reg DBPartRegular) size() int        { return reg.Size }
 
@@ -87,17 +92,19 @@ type DBPartSymlink struct {
 	DownloadDoneTime int64 // The time when it completed downloading
 	Url              string
 }
+
 func (slnk DBPartSymlink) folder() string   { return slnk.Folder }
 func (slnk DBPartSymlink) fileName() string { return slnk.FileName }
+func (slnk DBPartSymlink) fileId() string   { return slnk.FileId }
+func (slnk DBPartSymlink) project() string  { return slnk.Project }
 func (slnk DBPartSymlink) offset() int64    { return slnk.Offset }
 func (slnk DBPartSymlink) size() int        { return slnk.Size }
 
-
 // JobInfo ...
 type JobInfo struct {
-	part              DBPart
-	url              *DXDownloadURL
-	completeNs        int64
+	part       DBPart
+	url        *DXDownloadURL
+	completeNs int64
 }
 
 // DownloadStatus ...
@@ -116,13 +123,13 @@ type DownloadStatus struct {
 }
 
 type State struct {
-	dxEnv            DXEnvironment
-	opts             Opts
-	mutex            sync.Mutex
+	dxEnv           DXEnvironment
+	opts            Opts
+	mutex           sync.Mutex
 	db              *sql.DB
-	ds              *DownloadStatus  // only the progress report thread accesses this field
-	timeOfLastError  int
-	maxChunkSize     int64
+	ds              *DownloadStatus // only the progress report thread accesses this field
+	timeOfLastError int
+	maxChunkSize    int64
 }
 
 //-----------------------------------------------------------------
@@ -144,7 +151,7 @@ func calcNumThreads(maxChunkSize int64) int {
 	fmt.Printf("number of machine cores: %d\n", numCPUs)
 	fmt.Printf("memory size: %d GiB\n", hwMemoryBytes/GiB)
 
-	numThreads := MinInt(2 * numCPUs, maxNumThreads)
+	numThreads := MinInt(2*numCPUs, maxNumThreads)
 	memoryCostPerThread := 3 * int64(maxChunkSize)
 
 	for numThreads > minNumThreads {
@@ -188,16 +195,16 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	// Limit the number of threads
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
-//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
+	//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
-	return &State {
-		dxEnv : dxEnv,
-		opts : opts,
-		mutex : sync.Mutex{},
-		db : db,
-		ds : nil,
-		timeOfLastError : 0,
-		maxChunkSize : maxChunkSize,
+	return &State{
+		dxEnv:           dxEnv,
+		opts:            opts,
+		mutex:           sync.Mutex{},
+		db:              db,
+		ds:              nil,
+		timeOfLastError: 0,
+		maxChunkSize:    maxChunkSize,
 	}
 }
 
@@ -254,7 +261,7 @@ func (st *State) CheckDiskSpace() error {
 	//
 	totalSizeBytes :=
 		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats WHERE bytes_fetched != size") +
-		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats WHERE bytes_fetched != size")
+			st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats WHERE bytes_fetched != size")
 
 	// Find how much local disk space is available
 	var stat syscall.Statfs_t
@@ -302,7 +309,7 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 
 	for offset < slnk.Size {
 		// make sure we don't go over the file size
-		endOfs := MinInt64(offset + st.maxChunkSize, slnk.Size)
+		endOfs := MinInt64(offset+st.maxChunkSize, slnk.Size)
 		partLen := endOfs - offset
 
 		if partLen <= 0 {
@@ -328,7 +335,6 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 	_, err := txn.Exec(sqlStmt)
 	check(err)
 }
-
 
 // Read the manifest file, and build a database with an empty state
 // for each part in each file.
@@ -413,7 +419,6 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	st.prepareFilesForDownload(manifest)
 }
 
-
 // create an empty file for each download path.
 //
 // TODO: Optimize this for only files that need to be downloaded
@@ -437,10 +442,10 @@ func (st *State) InitDownloadStatus() {
 	// total amounts to download, calculated once
 	numParts :=
 		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats") +
-		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats")
+			st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats")
 	numBytes :=
 		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats") +
-		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats")
+			st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats")
 
 	progressIntervalSec := 0
 	if st.dxEnv.DxJobId == "" {
@@ -453,12 +458,12 @@ func (st *State) InitDownloadStatus() {
 	}
 
 	st.ds = &DownloadStatus{
-		NumParts : numParts,
-		NumBytes : numBytes,
-		NumPartsComplete : 0,
-		NumBytesComplete : 0,
-		ProgressInterval : time.Duration(progressIntervalSec) * time.Second,
-		MaxWindowSize : int64(2 * 60 * 1000 * 1000 * 1000),
+		NumParts:         numParts,
+		NumBytes:         numBytes,
+		NumPartsComplete: 0,
+		NumBytesComplete: 0,
+		ProgressInterval: time.Duration(progressIntervalSec) * time.Second,
+		MaxWindowSize:    int64(2 * 60 * 1000 * 1000 * 1000),
 	}
 
 	if st.opts.Verbose {
@@ -506,17 +511,17 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 	// query the current progress
 	st.ds.NumBytesComplete =
 		st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE bytes_fetched = size") +
-		st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_symlink_stats WHERE bytes_fetched = size")
+			st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_symlink_stats WHERE bytes_fetched = size")
 	st.ds.NumPartsComplete =
 		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched = size") +
-		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched = size")
+			st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched = size")
 
 	// calculate bandwitdh
 	bandwidthMBSec := st.calcBandwidth(timeWindowNanoSec)
 
 	// report on GC statistics
 	gcReport := ""
-	if (st.opts.GcInfo) {
+	if st.opts.GcInfo {
 		var gcStats runtime.MemStats
 		runtime.ReadMemStats(&gcStats)
 		crntAlloc := int64(gcStats.Alloc)
@@ -601,7 +606,7 @@ func (st *State) downloadSymlinkPart(
 	defer localf.Close()
 
 	headers := make(map[string]string)
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", p.offset(), p.offset() + int64(p.size()) - 1)
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", p.offset(), p.offset()+int64(p.size())-1)
 
 	for k, v := range u.Headers {
 		headers[k] = v
@@ -639,7 +644,7 @@ func (st *State) downloadRegPartCheckSum(
 	// loop through the part, reading in chunk pieces
 	endPart := p.Offset + int64(p.Size) - 1
 	for ofs := p.Offset; ofs <= endPart; ofs += st.maxChunkSize {
-		chunkEnd := MinInt64(ofs + st.maxChunkSize - 1, endPart)
+		chunkEnd := MinInt64(ofs+st.maxChunkSize-1, endPart)
 		chunkSize := int(chunkEnd - ofs + 1)
 
 		headers := make(map[string]string)
@@ -676,7 +681,7 @@ func (st *State) downloadRegPart(
 	u DXDownloadURL,
 	memoryBuf []byte) error {
 
-	for i := 0 ; i < numRetriesChecksumMismatch; i++ {
+	for i := 0; i < numRetriesChecksumMismatch; i++ {
 		ok, err := st.downloadRegPartCheckSum(httpClient, p, u, memoryBuf)
 		if err != nil {
 			return err
@@ -692,25 +697,25 @@ func (st *State) downloadRegPart(
 }
 
 // create a download url if one doesn't exist
-func (st *State) createURL(p DBPartRegular, urls map[string]DXDownloadURL, httpClient *http.Client) *DXDownloadURL {
+func (st *State) createURL(p DBPart, urls map[string]DXDownloadURL, httpClient *http.Client) *DXDownloadURL {
 	var u DXDownloadURL
 
 	// check if we already have it
-	u, ok := urls[p.FileId]
+	u, ok := urls[p.fileId()]
 	if ok {
 		return &u
 	}
 
 	// a regular DNAx file. Requires generating a pre-authenticated download URL.
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-		p.Project, secondsInYear)
+		p.project(), secondsInYear)
 
 	body, err := DxAPI(
 		context.TODO(),
 		httpClient,
 		numRetries,
 		&st.dxEnv,
-		fmt.Sprintf("%s/download", p.FileId),
+		fmt.Sprintf("%s/download", p.fileId()),
 		payload)
 	check(err)
 
@@ -720,13 +725,13 @@ func (st *State) createURL(p DBPartRegular, urls map[string]DXDownloadURL, httpC
 	}
 
 	// record the pre-auth URL so we don't have to create it again
-	urls[p.FileId] = u
+	urls[p.fileId()] = u
 	return &u
 }
 
 // A thread that adds pre-authenticated urls to each jobs.
 //
-func (st *State) preauthUrlsWorker(jobs <- chan JobInfo, jobsWithUrls chan JobInfo) {
+func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInfo) {
 	httpClient := NewHttpClient()
 	urls := make(map[string]DXDownloadURL)
 
@@ -738,10 +743,11 @@ func (st *State) preauthUrlsWorker(jobs <- chan JobInfo, jobsWithUrls chan JobIn
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
-			j.url = &DXDownloadURL{
-				URL : pLnk.Url,
-				Headers : make(map[string]string, 0),
-			}
+			// j.url = &DXDownloadURL{
+			// 	URL : pLnk.Url,
+			// 	Headers : make(map[string]string, 0),
+			// }
+			j.url = st.createURL(pLnk, urls, httpClient)
 		}
 
 		jobsWithUrls <- j
@@ -786,14 +792,14 @@ func (st *State) dbApplyBulkUpdates(completedJobs []JobInfo) {
 	check(err)
 	defer txn.Commit()
 
-	for _, j := range(completedJobs) {
+	for _, j := range completedJobs {
 		st.updateDBPart(txn, j.part, j.completeNs)
 	}
 }
 
 // update the database when a job completes
 // Do this in bulk
-func (st *State) dbUpdateWorker(jobsDbUpdate <- chan JobInfo, wg *sync.WaitGroup) {
+func (st *State) dbUpdateWorker(jobsDbUpdate <-chan JobInfo, wg *sync.WaitGroup) {
 	var accu []JobInfo
 	for j := range jobsDbUpdate {
 		accu = append(accu, j)
@@ -832,8 +838,8 @@ func (st *State) DownloadManifestDB(fname string) {
 			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		j := JobInfo{
-			part : p,
-			url : nil,
+			part: p,
+			url:  nil,
 		}
 		jobs <- j
 		numRows++
@@ -852,9 +858,9 @@ func (st *State) DownloadManifestDB(fname string) {
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
 			&p.Size, &p.BytesFetched, &p.DownloadDoneTime, &p.Url)
 		check(err)
-		j := JobInfo {
-			part : p,
-			url : nil,
+		j := JobInfo{
+			part: p,
+			url:  nil,
 		}
 		jobs <- j
 	}
@@ -900,7 +906,6 @@ func (st *State) DownloadManifestDB(fname string) {
 	PrintLogAndOut("Download completed successfully.\n")
 	PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
 }
-
 
 // UpdateDBPart.
 func (st *State) updateDBPart(txn *sql.Tx, p DBPart, tsNanoSec int64) {
@@ -981,7 +986,6 @@ func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 	check(err)
 }
 
-
 // -----------------------------------------
 // inspect: validation of downloaded parts
 
@@ -1038,7 +1042,6 @@ func (st *State) filePartIntegrityWorker(id int, jobs <-chan JobInfo, integrityM
 	}
 	wg.Done()
 }
-
 
 func (st *State) validateSymlinkChecksum(f DXFileSymlink, integrityMsgs chan string) {
 	fname := fmt.Sprintf(".%s/%s", f.Folder, f.Name)
@@ -1103,7 +1106,7 @@ func (st *State) checkAllRegularFileIntegrity() bool {
 			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		j := JobInfo{
-			part : p,
+			part: p,
 		}
 		jobs <- j
 	}
@@ -1160,7 +1163,7 @@ func (st *State) checkAllSymlinkIntegrity() bool {
 
 	// skip files that weren't entirely downloaded
 	var completed []DXFileSymlink
-	for _, slnk := range(allSymlinks) {
+	for _, slnk := range allSymlinks {
 		numBytesComplete := st.queryDBIntegerResult(
 			fmt.Sprintf("SELECT SUM(bytes_fetched) FROM manifest_symlink_stats WHERE file_id = '%s'",
 				slnk.Id))
@@ -1182,7 +1185,7 @@ func (st *State) checkAllSymlinkIntegrity() bool {
 
 	// Create a job to verify all of the symlinks.
 	//
-	for _, slnk := range(completed) {
+	for _, slnk := range completed {
 		if st.opts.Verbose {
 			fmt.Printf("Checking symlink %s\n", slnk.Url)
 		}
