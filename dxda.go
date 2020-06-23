@@ -405,6 +405,8 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	for _, f := range manifest.Files {
 		switch f.(type) {
 		case DXFileRegular:
+			fmt.Println("Regular file")
+			fmt.Println(DXFileRegular.id)
 			st.addRegularFileToTable(txn, f.(DXFileRegular))
 		case DXFileSymlink:
 			st.addSymlinkToTable(txn, f.(DXFileSymlink))
