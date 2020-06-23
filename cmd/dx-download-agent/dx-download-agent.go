@@ -82,7 +82,6 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	// setup a persistent database to track all downloads
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
-		fmt.Printf("WTF")
 		st.CreateManifestDB(*manifest, fname)
 	}
 

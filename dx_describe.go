@@ -3,7 +3,6 @@ package dxda
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 )
 
@@ -126,14 +125,12 @@ func submit(
 
 		// If this is a symlink, create structure with
 		// all the relevant information.
-		fmt.Println(descRaw.Id)
 		var symlink *DXSymlink = nil
 		if descRaw.MD5 != nil {
 			symlink = &DXSymlink{
 				MD5:   *descRaw.MD5,
 				Drive: *descRaw.Drive,
 			}
-			fmt.Println("DRIVE: %s\n", *descRaw.Drive)
 		}
 
 		desc := DxDescribeDataObject{

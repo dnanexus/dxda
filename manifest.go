@@ -203,7 +203,6 @@ func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvi
 		}
 	}
 
-	fmt.Print("Validating manifest")
 	// describe all the files
 	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, dxEnv, fileIds)
 	if err != nil {
