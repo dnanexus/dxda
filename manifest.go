@@ -52,7 +52,6 @@ type DXFileSymlink struct {
 	ProjId string
 	Name   string
 	Size   int64
-	Url    string
 	MD5    string
 }
 
@@ -251,7 +250,6 @@ func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvi
 					ProjId: projId,
 					Name:   f.Name,
 					Size:   fDesc.Size,
-					Url:    "",
 					MD5:    fDesc.Symlink.MD5,
 				}
 				manifest.Files = append(manifest.Files, dxSymlink)
