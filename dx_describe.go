@@ -126,7 +126,7 @@ func submit(
 		// If this is a symlink, create structure with
 		// all the relevant information.
 		var symlink *DXSymlink = nil
-		if descRaw.MD5 != nil {
+		if descRaw.Drive != nil {
 			symlink = &DXSymlink{
 				MD5:   *descRaw.MD5,
 				Drive: *descRaw.Drive,
