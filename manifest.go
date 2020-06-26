@@ -20,25 +20,25 @@ import (
 //  1) a map from file-id to a description of a regular file
 //  2) a map from file-id to a description of a symbolic link
 type Manifest struct {
-	Files     []DXFile
+	Files []DXFile
 }
 
 // one interface representing both symbolic links and data files
 type DXFile interface {
-	id()          string
-	projId()      string
-	folder()      string
-	name()        string
+	id() string
+	projId() string
+	folder() string
+	name() string
 }
 
 // Data file on dnanexus
 type DXFileRegular struct {
-	Folder        string
-	Id            string
-	ProjId        string
-	Name          string
-	Size          int64
-	Parts         []DXPart
+	Folder string
+	Id     string
+	ProjId string
+	Name   string
+	Size   int64
+	Parts  []DXPart
 }
 
 func (reg DXFileRegular) id() string     { return reg.Id }
@@ -46,15 +46,13 @@ func (reg DXFileRegular) projId() string { return reg.ProjId }
 func (reg DXFileRegular) folder() string { return reg.Folder }
 func (reg DXFileRegular) name() string   { return reg.Name }
 
-
 type DXFileSymlink struct {
-	Folder        string
-	Id            string
-	ProjId        string
-	Name          string
-	Size          int64
-	Url           string
-	MD5           string
+	Folder string
+	Id     string
+	ProjId string
+	Name   string
+	Size   int64
+	MD5    string
 }
 
 func (slnk DXFileSymlink) id() string     { return slnk.Id }
@@ -73,10 +71,10 @@ type ManifestRaw map[string][]ManifestRawFile
 // File description in the manifest. Additional details will be gathered
 // with an API call.
 type ManifestRawFile struct {
-	Folder        string            `json:"folder"`
-	Id            string            `json:"id"`
-	Name          string            `json:"name"`
-	Parts        *map[string]DXPart `json:"parts,omitempty"`
+	Folder string             `json:"folder"`
+	Id     string             `json:"id"`
+	Name   string             `json:"name"`
+	Parts  *map[string]DXPart `json:"parts,omitempty"`
 }
 
 func validateDirName(p string) error {
@@ -144,9 +142,9 @@ func processFileParts(orgParts map[string]DXPart) []DXPart {
 	var parts []DXPart
 	for partId, p := range orgParts {
 		p2 := DXPart{
-			Id :   safeString2Int(partId),
-			MD5 :  p.MD5,
-			Size : p.Size,
+			Id:   safeString2Int(partId),
+			MD5:  p.MD5,
+			Size: p.Size,
 		}
 		parts = append(parts, p2)
 	}
@@ -159,7 +157,7 @@ func processFileParts(orgParts map[string]DXPart) []DXPart {
 
 func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 	manifest := Manifest{
-		Files : make([]DXFile, 0),
+		Files: make([]DXFile, 0),
 	}
 
 	// fill in the missing information
@@ -171,18 +169,18 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 
 			// calculate file size by summing up the parts
 			size := int64(0)
-			for _, p := range(parts) {
+			for _, p := range parts {
 				size += int64(p.Size)
 			}
 
 			// regular file
 			dxFile := DXFileRegular{
-				Folder : folder,
-				Id : f.Id,
-				ProjId : projId,
-				Name : f.Name,
-				Size : size,
-				Parts : parts,
+				Folder: folder,
+				Id:     f.Id,
+				ProjId: projId,
+				Name:   f.Name,
+				Size:   size,
+				Parts:  parts,
 			}
 			manifest.Files = append(manifest.Files, dxFile)
 		}
@@ -190,7 +188,6 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 
 	return &manifest, nil
 }
-
 
 // Fill in missing fields for each file. Split into symlinks, and regular files.
 //
@@ -212,7 +209,7 @@ func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvi
 	}
 
 	manifest := Manifest{
-		Files : make([]DXFile, 0),
+		Files: make([]DXFile, 0),
 	}
 
 	// fill in the missing information
@@ -237,24 +234,23 @@ func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvi
 			if fDesc.Symlink == nil {
 				// regular file
 				dxFile := DXFileRegular{
-					Folder : folder,
-					Id : f.Id,
-					ProjId : projId,
-					Name : f.Name,
-					Size : fDesc.Size,
-					Parts : processFileParts(fDesc.Parts),
+					Folder: folder,
+					Id:     f.Id,
+					ProjId: projId,
+					Name:   f.Name,
+					Size:   fDesc.Size,
+					Parts:  processFileParts(fDesc.Parts),
 				}
 				manifest.Files = append(manifest.Files, dxFile)
 			} else {
 				// symbolic link
 				dxSymlink := DXFileSymlink{
-					Folder : folder,
-					Id : f.Id,
-					ProjId : projId,
-					Name : f.Name,
-					Size : fDesc.Size,
-					Url : fDesc.Symlink.Url,
-					MD5 : fDesc.Symlink.MD5,
+					Folder: folder,
+					Id:     f.Id,
+					ProjId: projId,
+					Name:   f.Name,
+					Size:   fDesc.Size,
+					MD5:    fDesc.Symlink.MD5,
 				}
 				manifest.Files = append(manifest.Files, dxSymlink)
 			}

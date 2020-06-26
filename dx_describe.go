@@ -9,42 +9,42 @@ import (
 // Limit on the number of objects that the bulk-describe API can take
 const (
 	maxNumObjectsInDescribe = 1000
-	numRetriesDefault   = 3
+	numRetriesDefault       = 3
 )
 
 // Description of a DNAx data object
 type DxDescribeDataObject struct {
-	Id             string
-	ProjId         string
-	Name           string
-	State          string
-	ArchivalState  string
-	Folder         string
-	Size           int64
-	Parts          map[string]DXPart // a list of parts for a DNAx file
-	Symlink        *DXSymlink
+	Id            string
+	ProjId        string
+	Name          string
+	State         string
+	ArchivalState string
+	Folder        string
+	Size          int64
+	Parts         map[string]DXPart // a list of parts for a DNAx file
+	Symlink       *DXSymlink
 }
 
 // description of part of a file
 type DXPart struct {
 	// we add the part-id in a post-processing step
-	Id     int
+	Id int
 
 	// these fields are in the input JSON
-	MD5    string `json:"md5"`
-	Size   int    `json:"size"`
+	MD5  string `json:"md5"`
+	Size int    `json:"size"`
 }
 
 // a full URL for symbolic links, with a corresponding MD5 checksum for
 // the entire file.
+// Drive and MD5 of symlnk
 type DXSymlink struct {
-	Url string
-	MD5 string
+	Drive string
+	MD5   string
 }
 
-
 type Request struct {
-	Objects []string `json:"objects"`
+	Objects              []string                              `json:"objects"`
 	ClassDescribeOptions map[string]map[string]map[string]bool `json:"classDescribeOptions"`
 }
 
@@ -57,19 +57,20 @@ type DxDescribeRawTop struct {
 }
 
 type DxSymlinkRaw struct {
-	Url string  `json:"object"`
+	Url string `json:"object"`
 }
 
 type DxDescribeRaw struct {
-	Id               string `json:"id"`
-	ProjId           string `json:"project"`
-	Name             string `json:"name"`
-	State            string `json:"state"`
-	ArchivalState    string `json:"archivalState"`
-	Size             int64 `json:"size"`
-	Parts            map[string]DXPart `json:"parts"`
-	Symlink         *DxSymlinkRaw `json:"symlinkPath,omitempty"`
-	MD5             *string       `json:"md5,omitempty"`
+	Id            string            `json:"id"`
+	ProjId        string            `json:"project"`
+	Name          string            `json:"name"`
+	State         string            `json:"state"`
+	ArchivalState string            `json:"archivalState"`
+	Size          int64             `json:"size"`
+	Parts         map[string]DXPart `json:"parts"`
+	Symlink       *DxSymlinkRaw     `json:"symlinkPath,omitempty"`
+	MD5           *string           `json:"md5,omitempty"`
+	Drive         *string           `json:"drive,omitempty"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -81,25 +82,25 @@ func submit(
 
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
-	describeOptions := map[string]map[string]map[string]bool {
-		"*" : map[string]map[string]bool {
-			"fields" : map[string]bool {
-				"id" : true,
-				"project" : true,
-				"name" : true,
-				"state" : true,
-				"archivalState" : true,
-				"size" : true,
-				"parts" : true,
-				"symlinkPath" : true,
-				"drive" : true,
-				"md5" : true,
+	describeOptions := map[string]map[string]map[string]bool{
+		"*": map[string]map[string]bool{
+			"fields": map[string]bool{
+				"id":            true,
+				"project":       true,
+				"name":          true,
+				"state":         true,
+				"archivalState": true,
+				"size":          true,
+				"parts":         true,
+				"symlinkPath":   true,
+				"drive":         true,
+				"md5":           true,
 			},
 		},
 	}
 	request := Request{
-		Objects : fileIds,
-		ClassDescribeOptions : describeOptions,
+		Objects:              fileIds,
+		ClassDescribeOptions: describeOptions,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -119,28 +120,28 @@ func submit(
 	}
 
 	var files = make(map[string]DxDescribeDataObject)
-	for _, descRawTop := range(reply.Results) {
+	for _, descRawTop := range reply.Results {
 		descRaw := descRawTop.Describe
 
 		// If this is a symlink, create structure with
 		// all the relevant information.
 		var symlink *DXSymlink = nil
-		if descRaw.Symlink != nil {
+		if descRaw.Drive != nil {
 			symlink = &DXSymlink{
-				MD5 : *descRaw.MD5,
-				Url : descRaw.Symlink.Url,
+				MD5:   *descRaw.MD5,
+				Drive: *descRaw.Drive,
 			}
 		}
 
 		desc := DxDescribeDataObject{
-			Id :  descRaw.Id,
-			ProjId : descRaw.ProjId,
-			Name : descRaw.Name,
-			State : descRaw.State,
-			ArchivalState : descRaw.ArchivalState,
-			Size : descRaw.Size,
-			Parts : descRaw.Parts,
-			Symlink : symlink,
+			Id:            descRaw.Id,
+			ProjId:        descRaw.ProjId,
+			Name:          descRaw.Name,
+			State:         descRaw.State,
+			ArchivalState: descRaw.ArchivalState,
+			Size:          descRaw.Size,
+			Parts:         descRaw.Parts,
+			Symlink:       symlink,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc
@@ -170,7 +171,7 @@ func DxDescribeBulkObjects(
 	// Don't forget the tail of the requests, that is smaller than the batch size
 	batches = append(batches, objIds)
 
-	for _, objIdBatch := range(batches) {
+	for _, objIdBatch := range batches {
 		m, err := submit(ctx, httpClient, dxEnv, objIdBatch)
 		if err != nil {
 			return nil, err
