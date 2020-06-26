@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	KiB = 1024
-	MiB = 1024 * KiB
-	GiB = 1024 * MiB
+	KiB                   = 1024
+	MiB                   = 1024 * KiB
+	GiB                   = 1024 * MiB
 )
 const (
 	// Limit on an http request to S3/Azure object storage
@@ -28,24 +28,24 @@ const (
 
 	// Extracted automatically with a shell script, so keep the format:
 	// version = XXXX
-	Version = "v0.3.1"
+	Version = "v0.3.0"
 )
 
 // Configuration options for the download agent
 type Opts struct {
-	NumThreads int  // number of workers to process downloads
-	Verbose    bool // verbose logging
-	GcInfo     bool // Garbage collection statistics
+	NumThreads int   // number of workers to process downloads
+	Verbose    bool  // verbose logging
+	GcInfo     bool  // Garbage collection statistics
 }
 
 // A subset of the configuration parameters that the dx-toolkit uses.
 //
 type DXEnvironment struct {
-	ApiServerHost     string `json:"apiServerHost"`
-	ApiServerPort     int    `json:"apiServerPort"`
-	ApiServerProtocol string `json:"apiServerProtocol"`
-	Token             string `json:"token"`
-	DxJobId           string `json:"dxJobId"`
+	ApiServerHost      string `json:"apiServerHost"`
+	ApiServerPort      int    `json:"apiServerPort"`
+	ApiServerProtocol  string `json:"apiServerProtocol"`
+	Token              string `json:"token"`
+	DxJobId            string `json:"dxJobId"`
 }
 
 // DXConfig - Basic variables regarding DNAnexus environment config
@@ -86,7 +86,7 @@ func GetDxEnvironment() (DXEnvironment, string, error) {
 	obtainedBy := ""
 
 	// start with hardcoded defaults
-	crntDxEnv := DXEnvironment{"api.dnanexus.com", 443, "https", "", ""}
+	crntDxEnv := DXEnvironment{ "api.dnanexus.com", 443, "https", "", "" }
 
 	// override by environment variables, if they are set
 	apiServerHost := os.Getenv("DX_APISERVER_HOST")
@@ -160,10 +160,10 @@ func MinInt(x, y int) int {
 }
 
 func MinInt64(x, y int64) int64 {
-	if x > y {
-		return y
-	}
-	return x
+    if x > y {
+        return y
+    }
+    return x
 }
 
 func safeString2Int(s string) int {
