@@ -317,9 +317,9 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 		}
 		sqlStmt := fmt.Sprintf(`
 				INSERT INTO manifest_symlink_stats
-				VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s');
+				VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d');
 				`,
-			slnk.Id, slnk.ProjId, slnk.Name, slnk.Folder, pId, offset, partLen, 0, 0, slnk.Url)
+			slnk.Id, slnk.ProjId, slnk.Name, slnk.Folder, pId, offset, partLen, 0, 0)
 		_, err := txn.Exec(sqlStmt)
 		check(err)
 		offset += partLen
@@ -329,9 +329,9 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 	// add to global table
 	sqlStmt := fmt.Sprintf(`
 		INSERT INTO symlinks
-		VALUES ('%s', '%s', '%s', '%s', '%d', '%s', '%s');
+		VALUES ('%s', '%s', '%s', '%s', '%d', '%s');
 		`,
-		slnk.Folder, slnk.Id, slnk.ProjId, slnk.Name, slnk.Size, slnk.Url, slnk.MD5)
+		slnk.Folder, slnk.Id, slnk.ProjId, slnk.Name, slnk.Size, slnk.MD5)
 	_, err := txn.Exec(sqlStmt)
 	check(err)
 }
@@ -374,8 +374,7 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
                 offset integer,
 		size integer,
 		bytes_fetched integer,
-                download_done_time integer,
-                url text
+                download_done_time integer
 	);
 	`
 	_, err = st.db.Exec(sqlStmt)
@@ -391,7 +390,6 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	        proj_id text,
   	        name    text,
 	        size    integer,
-	        url     text,
 	        md5     text
 	);
 	`
@@ -1070,17 +1068,17 @@ func (st *State) validateSymlinkChecksum(f DXFileSymlink, integrityMsgs chan str
 
 	if diskSum == f.MD5 {
 		if st.opts.Verbose {
-			fmt.Printf("file %s, symlink %s, has the correct checksum %s\n",
-				f.Name, f.Url, f.MD5)
+			fmt.Printf("symlink file %s, has the correct checksum %s\n",
+				f.Name, f.MD5)
 		}
 	} else {
 		msg := fmt.Sprintf(`
 Identified md5sum mismatch for symbolic link
     name      %s
-    symlink   %s
+    id   %s
     checksum  %s
 Please re-issue the download command to resolve`,
-			f.Name, f.Url, f.MD5)
+			f.Name, f.Id, f.MD5)
 		integrityMsgs <- msg
 		st.resetSymlinkFile(f)
 	}
@@ -1187,7 +1185,7 @@ func (st *State) checkAllSymlinkIntegrity() bool {
 	//
 	for _, slnk := range completed {
 		if st.opts.Verbose {
-			fmt.Printf("Checking symlink %s\n", slnk.Url)
+			fmt.Printf("Checking symlink %s\n", slnk.Id)
 		}
 		jobs <- slnk
 	}
