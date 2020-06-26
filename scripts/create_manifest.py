@@ -22,9 +22,7 @@ def fileID2manifest(fdetails, project):
     pruned['id'] = fdetails['id']
     pruned['name'] = fdetails['name']
     pruned['folder'] = fdetails['folder']
-    # Symlinks do not contain parts
-    if fdetails['parts']:
-      pruned['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size"} for pid, pdetails in fdetails['parts'].items()}
+    pruned['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size"} for pid, pdetails in fdetails['parts'].items()}
     return pruned
 
 def generate_manifest_file(folder, project, outfile, recursive):

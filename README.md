@@ -174,4 +174,4 @@ After successfully downloading (and optionally inspecting post-download) it shou
 
 ## Additional notes
 
-* Only objects of [class File](https://documentation.dnanexus.com/developer/api/introduction-to-data-object-classes) can be downloaded.
+* Only objects of [class File](https://wiki.dnanexus.com/API-Specification-v1.0.0/Introduction-to-Data-Object-Classes) can be downloaded.

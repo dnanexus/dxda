@@ -15,8 +15,8 @@ import (
 // download subcommand
 type downloadCmd struct {
 	numThreads int
-	verbose    bool
-	gcInfo     bool
+	verbose bool
+	gcInfo bool
 }
 
 var err error
@@ -98,7 +98,6 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 type progressCmd struct {
 }
-
 func (*progressCmd) Name() string     { return "progress" }
 func (*progressCmd) Synopsis() string { return "show current download progress" }
 
@@ -128,7 +127,7 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	defer st.Close()
 
 	st.InitDownloadStatus()
-	fmt.Println(st.DownloadProgressOneTime(60 * 1000 * 1000 * 1000))
+	fmt.Println(st.DownloadProgressOneTime(60*1000*1000*1000))
 	return subcommands.ExitSuccess
 }
 
@@ -181,14 +180,15 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 type versionCmd struct {
 }
 
-func (*versionCmd) Name() string               { return "version" }
-func (*versionCmd) Synopsis() string           { return "get the version" }
-func (*versionCmd) Usage() string              { return "get the dx-download-agent version" }
+func (*versionCmd) Name() string     { return "version" }
+func (*versionCmd) Synopsis() string { return "get the version" }
+func (*versionCmd) Usage() string    { return   "get the dx-download-agent version" }
 func (p *versionCmd) SetFlags(f *flag.FlagSet) {}
 func (p *versionCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	fmt.Println(dxda.Version)
 	return subcommands.ExitSuccess
 }
+
 
 // The CLI is simply a wrapper around the dxda package
 func main() {
