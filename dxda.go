@@ -49,8 +49,10 @@ type DXDownloadURL struct {
 // 2) part of symbolic link (a web address)
 type DBPart interface {
 	folder() string
+	fileId() string
 	fileName() string
 	offset() int64
+	project() string
 	size() int
 }
 
@@ -70,6 +72,8 @@ type DBPartRegular struct {
 
 func (reg DBPartRegular) folder() string   { return reg.Folder }
 func (reg DBPartRegular) fileName() string { return reg.FileName }
+func (reg DBPartRegular) fileId() string   { return reg.FileId }
+func (reg DBPartRegular) project() string  { return reg.Project }
 func (reg DBPartRegular) offset() int64    { return reg.Offset }
 func (reg DBPartRegular) size() int        { return reg.Size }
 
@@ -91,6 +95,8 @@ type DBPartSymlink struct {
 
 func (slnk DBPartSymlink) folder() string   { return slnk.Folder }
 func (slnk DBPartSymlink) fileName() string { return slnk.FileName }
+func (slnk DBPartSymlink) fileId() string   { return slnk.FileId }
+func (slnk DBPartSymlink) project() string  { return slnk.Project }
 func (slnk DBPartSymlink) offset() int64    { return slnk.Offset }
 func (slnk DBPartSymlink) size() int        { return slnk.Size }
 
@@ -311,9 +317,9 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 		}
 		sqlStmt := fmt.Sprintf(`
 				INSERT INTO manifest_symlink_stats
-				VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s');
+				VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d');
 				`,
-			slnk.Id, slnk.ProjId, slnk.Name, slnk.Folder, pId, offset, partLen, 0, 0, slnk.Url)
+			slnk.Id, slnk.ProjId, slnk.Name, slnk.Folder, pId, offset, partLen, 0, 0)
 		_, err := txn.Exec(sqlStmt)
 		check(err)
 		offset += partLen
@@ -323,9 +329,9 @@ func (st *State) addSymlinkToTable(txn *sql.Tx, slnk DXFileSymlink) {
 	// add to global table
 	sqlStmt := fmt.Sprintf(`
 		INSERT INTO symlinks
-		VALUES ('%s', '%s', '%s', '%s', '%d', '%s', '%s');
+		VALUES ('%s', '%s', '%s', '%s', '%d', '%s');
 		`,
-		slnk.Folder, slnk.Id, slnk.ProjId, slnk.Name, slnk.Size, slnk.Url, slnk.MD5)
+		slnk.Folder, slnk.Id, slnk.ProjId, slnk.Name, slnk.Size, slnk.MD5)
 	_, err := txn.Exec(sqlStmt)
 	check(err)
 }
@@ -356,8 +362,7 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	_, err = st.db.Exec(sqlStmt)
 	check(err)
 
-	// symbolic link parts do not have md5 checksums, and they
-	// can use the URL directly.
+	// symbolic link parts do not have md5 checksums
 	sqlStmt = `
 	CREATE TABLE manifest_symlink_stats (
 		file_id text,
@@ -368,8 +373,7 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
                 offset integer,
 		size integer,
 		bytes_fetched integer,
-                download_done_time integer,
-                url text
+                download_done_time integer
 	);
 	`
 	_, err = st.db.Exec(sqlStmt)
@@ -385,7 +389,6 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	        proj_id text,
   	        name    text,
 	        size    integer,
-	        url     text,
 	        md5     text
 	);
 	`
@@ -691,25 +694,25 @@ func (st *State) downloadRegPart(
 }
 
 // create a download url if one doesn't exist
-func (st *State) createURL(p DBPartRegular, urls map[string]DXDownloadURL, httpClient *http.Client) *DXDownloadURL {
+func (st *State) createURL(p DBPart, urls map[string]DXDownloadURL, httpClient *http.Client) *DXDownloadURL {
 	var u DXDownloadURL
 
 	// check if we already have it
-	u, ok := urls[p.FileId]
+	u, ok := urls[p.fileId()]
 	if ok {
 		return &u
 	}
 
 	// a regular DNAx file. Requires generating a pre-authenticated download URL.
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-		p.Project, secondsInYear)
+		p.project(), secondsInYear)
 
 	body, err := DxAPI(
 		context.TODO(),
 		httpClient,
 		numRetries,
 		&st.dxEnv,
-		fmt.Sprintf("%s/download", p.FileId),
+		fmt.Sprintf("%s/download", p.fileId()),
 		payload)
 	check(err)
 
@@ -719,7 +722,7 @@ func (st *State) createURL(p DBPartRegular, urls map[string]DXDownloadURL, httpC
 	}
 
 	// record the pre-auth URL so we don't have to create it again
-	urls[p.FileId] = u
+	urls[p.fileId()] = u
 	return &u
 }
 
@@ -737,10 +740,7 @@ func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInf
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
-			j.url = &DXDownloadURL{
-				URL:     pLnk.Url,
-				Headers: make(map[string]string, 0),
-			}
+			j.url = st.createURL(pLnk, urls, httpClient)
 		}
 
 		jobsWithUrls <- j
@@ -849,7 +849,7 @@ func (st *State) DownloadManifestDB(fname string) {
 	for rows.Next() {
 		var p DBPartSymlink
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.BytesFetched, &p.DownloadDoneTime, &p.Url)
+			&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
 		check(err)
 		j := JobInfo{
 			part: p,
@@ -1064,17 +1064,17 @@ func (st *State) validateSymlinkChecksum(f DXFileSymlink, integrityMsgs chan str
 
 	if diskSum == f.MD5 {
 		if st.opts.Verbose {
-			fmt.Printf("file %s, symlink %s, has the correct checksum %s\n",
-				f.Name, f.Url, f.MD5)
+			fmt.Printf("symlink file %s, has the correct checksum %s\n",
+				f.Name, f.MD5)
 		}
 	} else {
 		msg := fmt.Sprintf(`
 Identified md5sum mismatch for symbolic link
     name      %s
-    symlink   %s
+    id   %s
     checksum  %s
 Please re-issue the download command to resolve`,
-			f.Name, f.Url, f.MD5)
+			f.Name, f.Id, f.MD5)
 		integrityMsgs <- msg
 		st.resetSymlinkFile(f)
 	}
@@ -1146,7 +1146,7 @@ func (st *State) checkAllSymlinkIntegrity() bool {
 	var allSymlinks []DXFileSymlink
 	for rows.Next() {
 		var f DXFileSymlink
-		err := rows.Scan(&f.Folder, &f.Id, &f.ProjId, &f.Name, &f.Size, &f.Url, &f.MD5)
+		err := rows.Scan(&f.Folder, &f.Id, &f.ProjId, &f.Name, &f.Size, &f.MD5)
 		check(err)
 		allSymlinks = append(allSymlinks, f)
 	}
@@ -1181,7 +1181,7 @@ func (st *State) checkAllSymlinkIntegrity() bool {
 	//
 	for _, slnk := range completed {
 		if st.opts.Verbose {
-			fmt.Printf("Checking symlink %s\n", slnk.Url)
+			fmt.Printf("Checking symlink %s\n", slnk.Id)
 		}
 		jobs <- slnk
 	}
