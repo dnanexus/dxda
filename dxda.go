@@ -362,8 +362,7 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	_, err = st.db.Exec(sqlStmt)
 	check(err)
 
-	// symbolic link parts do not have md5 checksums, and they
-	// can use the URL directly.
+	// symbolic link parts do not have md5 checksums
 	sqlStmt = `
 	CREATE TABLE manifest_symlink_stats (
 		file_id text,
@@ -741,10 +740,6 @@ func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInf
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
-			// j.url = &DXDownloadURL{
-			// 	URL : pLnk.Url,
-			// 	Headers : make(map[string]string, 0),
-			// }
 			j.url = st.createURL(pLnk, urls, httpClient)
 		}
 
