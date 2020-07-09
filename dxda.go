@@ -886,6 +886,7 @@ func (st *State) DownloadManifestDB(fname string) {
 	}
 
 	var wgProgressReport sync.WaitGroup
+	wgProgressReport.Add(1)
 	st.InitDownloadStatus()
 	go st.downloadProgressContinuous(&wgProgressReport)
 
