@@ -228,9 +228,6 @@ func dxHttpRequestCore(
 
 	resp, err := client.Do(req)
 	if err != nil {
-		// read the response body so we can reuse this connection.
-		_, _ = io.Copy(ioutil.Discard, resp.Body)
-		resp.Body.Close()
 		return nil, err
 	}
 
