@@ -32,3 +32,10 @@ In order to test on the local machine, not on the cloud, go to directory `test/l
 | ----                   |  ---                                   | ---        | ---             |
 | `regular_file_test.sh` | small scale test for regular files     | 138 MB | 559 |
 | `symlink_test.sh`      | test with five moderate sized symlinks | 98 MB | 10 |
+
+# Cross-platform compilation
+
+Ubuntu 16.04 requires two additional apt packages for Windows compilation. 
+`gcc-multilib gcc-mingw-w64`
+The following build flags are also required to properly compile go-sqlite3.
+`env GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++`
