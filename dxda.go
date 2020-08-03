@@ -17,10 +17,9 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // Following canonical example on go-sqlite3 'simple.go'
@@ -264,17 +263,17 @@ func (st *State) CheckDiskSpace() error {
 			st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats WHERE bytes_fetched != size")
 
 	// Find how much local disk space is available
-	var stat syscall.Statfs_t
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	if err := syscall.Statfs(wd, &stat); err != nil {
+
+	// Get available bytes on the system
+	availableBytes, err := getAvailableBytes(wd)
+	if err != nil {
 		return err
 	}
 
-	// Available blocks * size per block = available space in bytes
-	availableBytes := int64(stat.Bavail) * int64(stat.Bsize)
 	if availableBytes < totalSizeBytes {
 		desc := fmt.Sprintf("Not enough disk space, available = %s, required = %s",
 			diskSpaceString(availableBytes),
@@ -416,14 +415,16 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 	st.prepareFilesForDownload(manifest)
 }
 
-// create an empty file for each download path.
+// create an empty file for each download filepath.
 //
 // TODO: Optimize this for only files that need to be downloaded
 func (st *State) prepareFilesForDownload(m Manifest) {
 	for _, f := range m.Files {
 		// Create directory structure and initialize file if it doesn't exist
-		folder := path.Join("./", f.folder())
-		fname := path.Join(folder, f.name())
+		wd, err := os.Getwd()
+		check(err)
+		folder := filepath.Join(wd, f.folder())
+		fname := filepath.Join(folder, f.name())
 		if _, err := os.Stat(fname); os.IsNotExist(err) {
 			err := os.MkdirAll(folder, 0777)
 			check(err)
@@ -940,9 +941,11 @@ func (st *State) resetDBPart(p DBPartRegular) {
 // database.
 func (st *State) resetRegularFile(p DBPartRegular) {
 	// zero out the file
-	folder := path.Join("./", p.Folder)
-	fname := path.Join(folder, p.FileName)
-	err := os.Truncate(fname, 0)
+	wd, err := os.Getwd()
+	check(err)
+	folder := filepath.Join(wd, p.Folder)
+	fname := filepath.Join(folder, p.FileName)
+	err = os.Truncate(fname, 0)
 	check(err)
 
 	st.mutex.Lock()
@@ -962,9 +965,11 @@ func (st *State) resetRegularFile(p DBPartRegular) {
 // database.
 func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 	// zero out the file
-	folder := path.Join("./", slnk.Folder)
-	fname := path.Join(folder, slnk.Name)
-	err := os.Truncate(fname, 0)
+	wd, err := os.Getwd()
+	check(err)
+	folder := filepath.Join(wd, slnk.Folder)
+	fname := filepath.Join(folder, slnk.Name)
+	err = os.Truncate(fname, 0)
 	check(err)
 
 	st.mutex.Lock()
