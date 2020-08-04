@@ -49,11 +49,12 @@ jobs:
           run: |
             go get -u github.com/dnanexus/dxda
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
+            dir
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
-            name: dx-download-agent-macos
-            path: ./dx-download-agent
+            name: dx-download-agent-windows.exe
+            path: ./dx-download-agent.exe
   # windows:
   #   name: Windows build
   #   runs-on: ubuntu-16.04
