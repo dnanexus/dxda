@@ -1,0 +1,79 @@
+name: Manual Build Testing
+on: 
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag
+        required: true
+jobs:
+  macos:
+    name: Macos build
+    runs-on: macos-10.15
+    env:
+      GOOS: darwin
+      GOARCH: amd64
+      CGO_ENABLED: 1
+    steps:
+        - uses: actions/checkout@v2
+        - uses: actions/setup-go@v2
+          with:
+            go-version: '^1.14.2' # The Go version to download (if necessary) and use.
+        - run: go dependencies
+        run: go get github.com/google/subcommands && go install github.com/google/subcommands
+        - name: Build Macos executable
+        run: go build -o dx-download-agent-macos cmd/dx-download-agent/dx-download-agent.go 
+        - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: dx-download-agent-macos
+          path: dx-download-agent-macos
+  windows:
+    name: Windows build
+    runs-on: ubuntu-16.04
+    GOOS: windows
+    GOARCH: amd64
+    CGO_ENABLED: 1
+    CC: x86_64-w64-mingw32-gcc
+    CXX: x86_64-w64-mingw32-g++
+    steps:
+        - uses: actions/checkout@v2
+        - uses: actions/setup-go@v2
+          with:
+            go-version: '^1.14.2' # The Go version to download (if necessary) and use.
+        - name: apt-get dependencies
+        run: sudo apt-get install -y build-essential gcc-multilib gcc-mingw-w64
+        - name: go dependencies
+        run: go get github.com/google/subcommands && go install github.com/google/subcommands
+        - name: Build Windows executable
+        run: go build -o dx-download-agent-windows.exe cmd/dx-download-agent/dx-download-agent.go
+        - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: dx-download-agent-windows.exe
+          path: dx-download-agent-windows.exe
+  linux:
+    name: Linux build
+    runs-on: ubuntu-16.04
+    GOOS: linux
+    GOARCH: amd64
+    CGO_ENABLED: 1
+    steps:
+        - uses: actions/checkout@v2
+        - uses: actions/setup-go@v2
+          with:
+            go-version: '^1.14.2' # The Go version to download (if necessary) and use.
+        - name: apt-get dependencies
+        run: sudo apt-get install -y build-essential
+        - name: Variable checking
+        run: |
+          echo "Version: ${{ github.event.inputs.version }}" 
+          pwd
+        - name: go dependencies
+        run: go get github.com/google/subcommands && go install github.com/google/subcommands
+        - name: Build Linux executable
+        run: go build -o dx-download-agent-linux cmd/dx-download-agent/dx-download-agent.go
+        - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: dx-download-agent-linux
+          path: dx-download-agent-linux
