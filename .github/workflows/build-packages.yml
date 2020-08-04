@@ -13,18 +13,19 @@ jobs:
       GOOS: darwin
       GOARCH: amd64
       CGO_ENABLED: 1
+      GOPATH: /home/runner/work/dxda/go
     steps:
-        #- uses: actions/checkout@v2
+        - uses: actions/checkout@v2
+          with:
+            path: go/src/github.com/dnanexus/dxda
         - uses: actions/setup-go@v2
           with:
             go-version: '^1.14.2' # The Go version to download (if necessary) and use.
-        - name: go dependencies
-          run: go get -u github.com/google/subcommands
         - name: Build Macos executable
           run: |
             set -x
             env
-            go get -u github.com/dnanexus/dxda
+            go get github.com/google/subcommands
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
@@ -38,8 +39,11 @@ jobs:
       GOOS: windows
       GOARCH: amd64
       CGO_ENABLED: 1
+      GOPATH: D:\a\dxda\dxda
     steps:
-        #- uses: actions/checkout@v2
+        - uses: actions/checkout@v2
+          with:
+            path: go\src\github.com\dnanexus\dxda
         - uses: actions/setup-go@v2
           with:
             go-version: '^1.14.2' # The Go version to download (if necessary) and use.
@@ -62,8 +66,11 @@ jobs:
       GOOS: linux
       GOARCH: amd64
       CGO_ENABLED: 1
+      GOPATH: /home/runner/work/dxda/go
     steps:
-        #- uses: actions/checkout@v2
+        - uses: actions/checkout@v2
+          with:
+            path: go/src/github.com/dnanexus/dxda
         - uses: actions/setup-go@v2
           with:
             go-version: '^1.14.2' # The Go version to download (if necessary) and use.
@@ -73,13 +80,11 @@ jobs:
           run: |
             echo "Version: ${{ github.event.inputs.version }}" 
             pwd
-        - name: go dependencies
-          run: go get github.com/google/subcommands
         - name: Build Linux executable
           run: |
             set -x
             env
-            go get github.com/dnanexus/dxda
+            go get github.com/google/subcommands
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
