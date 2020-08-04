@@ -21,7 +21,10 @@ jobs:
         - name: go dependencies
           run: go get github.com/google/subcommands && go install github.com/google/subcommands
         - name: Build Macos executable
-          run: go get github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
+          run: |
+            set -x
+            env
+            go get -u github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
@@ -44,9 +47,12 @@ jobs:
         - name: apt-get dependencies
           run: sudo apt-get install -y build-essential gcc-multilib gcc-mingw-w64
         - name: go dependencies
-          run: go get github.com/google/subcommands && go install github.com/google/subcommands
+          run: go get github.com/google/subcommands
         - name: Build Windows executable
-          run: go get github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
+          run: |
+            set -x
+            env
+            go get -u github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
@@ -73,7 +79,10 @@ jobs:
         - name: go dependencies
           run: go get github.com/google/subcommands && go install github.com/google/subcommands
         - name: Build Linux executable
-          run: go get github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
+          run: |
+            set -x
+            env
+            go get github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
