@@ -24,7 +24,8 @@ jobs:
           run: |
             set -x
             env
-            go get -u github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
+            go get -u github.com/dnanexus/dxda
+            go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
@@ -46,7 +47,8 @@ jobs:
           run: go get -u github.com/google/subcommands
         - name: Build Windows executable
           run: |
-            go get -u github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
+            go get -u github.com/dnanexus/dxda
+            go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
@@ -99,12 +101,13 @@ jobs:
             echo "Version: ${{ github.event.inputs.version }}" 
             pwd
         - name: go dependencies
-          run: go get github.com/google/subcommands && go install github.com/google/subcommands
+          run: go get github.com/google/subcommands
         - name: Build Linux executable
           run: |
             set -x
             env
-            go get github.com/dnanexus/dxda && go build github.com/dnanexus/dxda/cmd/dx-download-agent
+            go get github.com/dnanexus/dxda
+            go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
