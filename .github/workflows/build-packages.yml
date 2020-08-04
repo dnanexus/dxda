@@ -18,7 +18,7 @@ jobs:
         - uses: actions/setup-go@v2
           with:
             go-version: '^1.14.2' # The Go version to download (if necessary) and use.
-        - run: go dependencies
+        - name: go dependencies
         run: go get github.com/google/subcommands && go install github.com/google/subcommands
         - name: Build Macos executable
         run: go build -o dx-download-agent-macos cmd/dx-download-agent/dx-download-agent.go 
