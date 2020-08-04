@@ -1,10 +1,10 @@
-name: Manual Build Testing
-on: 
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Release tag
-        required: true
+name: Build release artifacts
+
+on:
+  release:
+    types:
+      - created
+
 jobs:
   macos:
     name: Macos build
@@ -18,16 +18,25 @@ jobs:
 
         - uses: actions/setup-go@v2
           with:
-            go-version: '^1.14.2' # The Go version to download (if necessary) and use.
+            go-version: '^1.14.2'
         - name: Build Macos executable
           run: |
             set -x
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
-        - name: 'Upload Artifact'
+        - name: Upload artifact
           uses: actions/upload-artifact@v2
           with:
             name: dx-download-agent-macos
             path: ./dx-download-agent
+        - name: Upload release asset
+          uses: actions/upload-release-asset@v1.0.1
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          with:
+            upload_url: ${{ github.event.release.upload_url }}
+            asset_path: ./dx-download-agent
+            asset_name: dx-download-agent-macos
+            asset_content_type: binary/octet-stream
   windows:
     name: Windows build
     runs-on: windows-latest
@@ -39,18 +48,27 @@ jobs:
         - uses: actions/checkout@v2
         - uses: actions/setup-go@v2
           with:
-            go-version: '^1.14.2' # The Go version to download (if necessary) and use.
+            go-version: '^1.14.2'
         - name: go dependencies
           run: go get -u github.com/google/subcommands
         - name: Build Windows executable
           run: |
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
             dir
-        - name: 'Upload Artifact'
+        - name: Upload artifact
           uses: actions/upload-artifact@v2
           with:
             name: dx-download-agent-windows.exe
             path: ./dx-download-agent.exe
+        - name: Upload release asset
+          uses: actions/upload-release-asset@v1.0.1
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          with:
+            upload_url: ${{ github.event.release.upload_url }}
+            asset_path: ./dx-download-agent.exe
+            asset_name: dx-download-agent-windows.exe
+            asset_content_type: binary/octet-stream
   linux:
     name: Linux build
     runs-on: ubuntu-16.04
@@ -62,15 +80,24 @@ jobs:
         - uses: actions/checkout@v2
         - uses: actions/setup-go@v2
           with:
-            go-version: '^1.14.2' # The Go version to download (if necessary) and use.
+            go-version: '^1.14.2'
         - name: apt-get dependencies
           run: sudo apt-get install -y build-essential
         - name: Build Linux executable
           run: |
             set -x
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
-        - name: 'Upload Artifact'
+        - name: Upload artifact
           uses: actions/upload-artifact@v2
           with:
             name: dx-download-agent-linux
             path: ./dx-download-agent
+        - name: Upload release asset
+          uses: actions/upload-release-asset@v1.0.1
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          with:
+            upload_url: ${{ github.event.release.upload_url }}
+            asset_path: ./dx-download-agent
+            asset_name: dx-download-agent-linux
+            asset_content_type: binary/octet-stream
