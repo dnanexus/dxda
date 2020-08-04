@@ -14,19 +14,19 @@ jobs:
       GOARCH: amd64
       CGO_ENABLED: 1
     steps:
-        - uses: actions/checkout@v2
+        #- uses: actions/checkout@v2
         - uses: actions/setup-go@v2
           with:
             go-version: '^1.14.2' # The Go version to download (if necessary) and use.
         - name: go dependencies
           run: go get github.com/google/subcommands && go install github.com/google/subcommands
         - name: Build Macos executable
-          run: go build -o dx-download-agent-macos cmd/dx-download-agent/dx-download-agent.go 
+          run: go get github.com/dnanexus/dxda && go install github.com/dnanexus/dxda
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
             name: dx-download-agent-macos
-            path: dx-download-agent-macos
+            path: /home/runner/go/bin/dx-download-agent
   windows:
     name: Windows build
     runs-on: ubuntu-16.04
@@ -46,12 +46,12 @@ jobs:
         - name: go dependencies
           run: go get github.com/google/subcommands && go install github.com/google/subcommands
         - name: Build Windows executable
-          run: go build -o dx-download-agent-windows.exe cmd/dx-download-agent/dx-download-agent.go
+          run: go get github.com/dnanexus/dxda && go install github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
             name: dx-download-agent-windows.exe
-            path: dx-download-agent-windows.exe
+            path: /home/runner/go/bin/dx-download-agent
   linux:
     name: Linux build
     runs-on: ubuntu-16.04
@@ -73,9 +73,9 @@ jobs:
         - name: go dependencies
           run: go get github.com/google/subcommands && go install github.com/google/subcommands
         - name: Build Linux executable
-          run: go build -o dx-download-agent-linux cmd/dx-download-agent/dx-download-agent.go
+          run: go get github.com/dnanexus/dxda && go install github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
           with:
             name: dx-download-agent-linux
-            path: dx-download-agent-linux
+            path: /home/runner/go/bin/dx-download-agent
