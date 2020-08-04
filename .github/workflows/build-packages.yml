@@ -22,7 +22,6 @@ jobs:
         - name: Build Macos executable
           run: |
             set -x
-            env
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
@@ -61,21 +60,14 @@ jobs:
       CGO_ENABLED: 1
     steps:
         - uses: actions/checkout@v2
-          with:
-            path: go/src/github.com/dnanexus/dxda
         - uses: actions/setup-go@v2
           with:
             go-version: '^1.14.2' # The Go version to download (if necessary) and use.
         - name: apt-get dependencies
           run: sudo apt-get install -y build-essential
-        - name: Variable checking
-          run: |
-            echo "Version: ${{ github.event.inputs.version }}" 
-            pwd
         - name: Build Linux executable
           run: |
             set -x
-            env
             go build github.com/dnanexus/dxda/cmd/dx-download-agent
         - name: 'Upload Artifact'
           uses: actions/upload-artifact@v2
