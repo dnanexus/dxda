@@ -15,14 +15,14 @@ jobs:
       CGO_ENABLED: 1
     steps:
         - uses: actions/checkout@v2
-
         - uses: actions/setup-go@v2
           with:
             go-version: '^1.14.2'
         - name: Build Macos executable
           run: |
             set -x
-            go build github.com/dnanexus/dxda/cmd/dx-download-agent
+            go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
+            chmod +x dx-download-agent
         - name: Upload artifact
           uses: actions/upload-artifact@v2
           with:
@@ -53,7 +53,7 @@ jobs:
           run: go get -u github.com/google/subcommands
         - name: Build Windows executable
           run: |
-            go build github.com/dnanexus/dxda/cmd/dx-download-agent
+            go build -o dx-download-agent.exe cmd/dx-download-agent/dx-download-agent.go
             dir
         - name: Upload artifact
           uses: actions/upload-artifact@v2
@@ -86,7 +86,8 @@ jobs:
         - name: Build Linux executable
           run: |
             set -x
-            go build github.com/dnanexus/dxda/cmd/dx-download-agent
+            go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
+            chmod +x dx-download-agent
         - name: Upload artifact
           uses: actions/upload-artifact@v2
           with:

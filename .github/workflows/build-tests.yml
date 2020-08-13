@@ -1,0 +1,66 @@
+name: Tests and build checks
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  macos:
+    name: Macos build
+    runs-on: macos-10.15
+    env:
+      GOOS: darwin
+      GOARCH: amd64
+      CGO_ENABLED: 1
+    steps:
+        - uses: actions/checkout@v2
+        - uses: actions/setup-go@v2
+          with:
+            go-version: '^1.14.2'
+        - name: Build Macos executable
+          run: |
+            set -x
+            go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
+            chmod +x dx-download-agent
+            ./dx-download-agent help
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    env:
+      GOOS: windows
+      GOARCH: amd64
+      CGO_ENABLED: 1
+    steps:
+        - uses: actions/checkout@v2
+        - uses: actions/setup-go@v2
+          with:
+            go-version: '^1.14.2'
+        - name: Build Windows executable
+          run: |
+            go build -o dx-download-agent.exe cmd/dx-download-agent/dx-download-agent.go
+            .\dx-download-agent help
+  linux:
+    name: Linux build and test
+    runs-on: ubuntu-16.04
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      CGO_ENABLED: 1
+    steps:
+        - uses: actions/checkout@v2
+        - uses: actions/setup-go@v2
+          with:
+            go-version: '^1.14.2'
+        - name: apt-get dependencies
+          run: sudo apt-get install -y build-essential
+        - name: Build Linux executable
+          run: |
+            set -x
+            go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
+        - name: Run tests
+          env:
+            DX_API_TOKEN: ${{ secrets.DX_API_TOKEN }}
+          run: |
+            set -x
+            ./dx-download-agent download -max_threads=`nproc` test_files/single_file.manifest.json.bz2
