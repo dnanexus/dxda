@@ -14,7 +14,7 @@ def main():
     parser.add_argument('--output_file', required=False, default='filtered_manifest.json.bz2', help="Output file name")
     args = parser.parse_args()
 
-    with open(args.manifest_file) as mf:
+    with open(args.manifest_file, "rb") as mf:
         manifest = json.loads(bz2.decompress(mf.read()))
     new_manifest = {}
     for project, file_list in manifest.items():
