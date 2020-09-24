@@ -9,7 +9,7 @@ import (
 // Limit on the number of objects that the bulk-describe API can take
 const (
 	maxNumObjectsInDescribe = 1000
-	numRetriesDefault       = 3
+	numRetriesDefault       = 10
 )
 
 // Description of a DNAx data object
@@ -110,6 +110,7 @@ func submit(
 	//fmt.Printf("payload = %s", string(payload))
 
 	repJs, err := DxAPI(ctx, httpClient, numRetriesDefault, dxEnv, "system/describeDataObjects", string(payload))
+
 	if err != nil {
 		return nil, err
 	}

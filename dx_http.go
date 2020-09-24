@@ -263,14 +263,14 @@ func DxHttpRequest(
 	attemptTimeout := attemptTimeoutInit
 	var tCnt int
 	var err error
-	for tCnt = 0; tCnt < numRetries; tCnt++ {
+	for tCnt = 0; tCnt <= numRetries; tCnt++ {
 		if tCnt > 0 {
 			// sleep before retrying. Use bounded exponential backoff.
 			time.Sleep(time.Duration(attemptTimeout) * time.Second)
 			attemptTimeout = MinInt(2*attemptTimeout, attemptTimeoutMax)
 		}
-
-		response, err := dxHttpRequestCore(ctx, client, requestType, url, headers, data)
+		var response *http.Response
+		response, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
 		if err == nil {
 			// http request went well, return the body
 			return response, nil
@@ -293,7 +293,6 @@ func DxHttpRequest(
 			return nil, err
 		}
 	}
-
 	log.Printf("%s request to '%s' failed after %d attempts, err=%s",
 		requestType, url, tCnt, err.Error())
 	return nil, err

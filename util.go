@@ -24,11 +24,11 @@ const (
 
 	// An API request to the dnanexus servers should never take more
 	// than this amount of time
-	dxApiOverallTimout = 2 * time.Minute
+	dxApiOverallTimout = 5 * time.Minute
 
 	// Extracted automatically with a shell script, so keep the format:
 	// version = XXXX
-	Version = "v0.5.1"
+	Version = "v0.5.2"
 )
 
 // Configuration options for the download agent
