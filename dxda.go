@@ -737,7 +737,8 @@ func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInf
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
-			j.url = st.createURL(p, urls, httpClient)
+			j.url = "http://10.0.3.1:8090/F/D2PRJ/" + p.fileId() + "/" + p.project()
+			//j.url = st.createURL(p, urls, httpClient)
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
