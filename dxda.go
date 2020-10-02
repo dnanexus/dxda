@@ -729,7 +729,7 @@ func (st *State) createURL(p DBPart, urls map[string]DXDownloadURL, httpClient *
 
 // A thread that adds pre-authenticated urls to each jobs.
 //
-func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInfo) {
+func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInfo, dxEnv *DXEnvironment) {
 	httpClient := NewHttpClient()
 	urls := make(map[string]DXDownloadURL)
 
@@ -737,8 +737,18 @@ func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInf
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
-			j.url = st.createURL(p, urls, httpClient)
-
+			// If running in a job and a download URI has been set in the execution environment
+			// skip file-xxxx/download call to reduce system load
+			if dxEnv.DxJobId != "" && os.Getenv("DX_DXDA_DOWNLOAD_URI") != "" {
+				var u DXDownloadURL
+				u.URL = os.Getenv("DX_DXDA_DOWNLOAD_URI") + p.fileId() + "/" + p.project()
+				headers := make(map[string]string)
+				headers["X-Authorization"] = dxEnv.Token
+				u.Headers = headers
+				j.url = &u
+			} else {
+				j.url = st.createURL(p, urls, httpClient)
+			}
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
 			j.url = st.createURL(pLnk, urls, httpClient)
@@ -865,7 +875,7 @@ func (st *State) DownloadManifestDB(fname string) {
 
 	// the preauth thread adds a valid URL to each job.
 	jobsWithUrls := make(chan JobInfo, totNumJobs)
-	go st.preauthUrlsWorker(jobs, jobsWithUrls)
+	go st.preauthUrlsWorker(jobs, jobsWithUrls, &st.dxEnv)
 
 	// the db-update thread updates the database when jobs
 	// complete.

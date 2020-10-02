@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // Limit on the number of objects that the bulk-describe API can take
@@ -44,8 +45,14 @@ type DXSymlink struct {
 }
 
 type Request struct {
-	Objects              []string                              `json:"objects"`
-	ClassDescribeOptions map[string]map[string]map[string]bool `json:"classDescribeOptions"`
+	Objects         []string                   `json:"objects"`
+	DescribeOptions map[string]map[string]bool `json:"describe"`
+}
+
+type RequestWithScope struct {
+	Objects         []string                   `json:"id"`
+	Scope           map[string]string          `json:"scope"`
+	DescribeOptions map[string]map[string]bool `json:"describe"`
 }
 
 type Reply struct {
@@ -78,38 +85,55 @@ func submit(
 	ctx context.Context,
 	httpClient *http.Client,
 	dxEnv *DXEnvironment,
+	projectId string,
 	fileIds []string) (map[string]DxDescribeDataObject, error) {
 
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
-	describeOptions := map[string]map[string]map[string]bool{
-		"*": map[string]map[string]bool{
-			"fields": map[string]bool{
-				"id":            true,
-				"project":       true,
-				"name":          true,
-				"state":         true,
-				"archivalState": true,
-				"size":          true,
-				"parts":         true,
-				"symlinkPath":   true,
-				"drive":         true,
-				"md5":           true,
-			},
+
+	describeOptions := map[string]map[string]bool{
+		"fields": map[string]bool{
+			"id":            true,
+			"project":       true,
+			"name":          true,
+			"state":         true,
+			"archivalState": true,
+			"size":          true,
+			"parts":         true,
+			"symlinkPath":   true,
+			"drive":         true,
+			"md5":           true,
 		},
 	}
-	request := Request{
-		Objects:              fileIds,
-		ClassDescribeOptions: describeOptions,
-	}
 	var payload []byte
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
+	// If given a valid project or container provide the scope parameter to reduce load on the backend
+	if strings.HasPrefix(projectId, "project-") || strings.HasPrefix(projectId, "container-") {
+		scope := map[string]string{
+			"project": projectId,
+		}
+		request := RequestWithScope{
+			Objects:         fileIds,
+			Scope:           scope,
+			DescribeOptions: describeOptions,
+		}
+		payload, err = json.Marshal(request)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		request := Request{
+			Objects:         fileIds,
+			DescribeOptions: describeOptions,
+		}
+		payload, err = json.Marshal(request)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	//fmt.Printf("payload = %s", string(payload))
 
-	repJs, err := DxAPI(ctx, httpClient, numRetriesDefault, dxEnv, "system/describeDataObjects", string(payload))
+	repJs, err := DxAPI(ctx, httpClient, numRetriesDefault, dxEnv, "system/findDataObjects", string(payload))
 
 	if err != nil {
 		return nil, err
@@ -123,7 +147,6 @@ func submit(
 	var files = make(map[string]DxDescribeDataObject)
 	for _, descRawTop := range reply.Results {
 		descRaw := descRawTop.Describe
-
 		// If this is a symlink, create structure with
 		// all the relevant information.
 		var symlink *DXSymlink = nil
@@ -154,6 +177,7 @@ func DxDescribeBulkObjects(
 	ctx context.Context,
 	httpClient *http.Client,
 	dxEnv *DXEnvironment,
+	projectId string,
 	objIds []string) (map[string]DxDescribeDataObject, error) {
 	var gMap = make(map[string]DxDescribeDataObject)
 	if len(objIds) == 0 {
@@ -173,7 +197,7 @@ func DxDescribeBulkObjects(
 	batches = append(batches, objIds)
 
 	for _, objIdBatch := range batches {
-		m, err := submit(ctx, httpClient, dxEnv, objIdBatch)
+		m, err := submit(ctx, httpClient, dxEnv, projectId, objIdBatch)
 		if err != nil {
 			return nil, err
 		}

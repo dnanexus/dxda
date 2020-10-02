@@ -194,18 +194,21 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvironment) (*Manifest, error) {
 	tmpHttpClient := &http.Client{}
 
-	// Make a list of all the file-ids
-	var fileIds []string
-	for _, files := range mRaw {
+	var describedObjects = make(map[string]DxDescribeDataObject)
+	// batch calls per project-id
+	for projectId, files := range mRaw {
+		var fileIds []string
 		for _, f := range files {
 			fileIds = append(fileIds, f.Id)
 		}
-	}
-
-	// describe all the files
-	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, dxEnv, fileIds)
-	if err != nil {
-		return nil, err
+		dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, dxEnv, projectId, fileIds)
+		if err != nil {
+			return nil, err
+		}
+		// Append described objects from this project
+		for objId, objDescribe := range dataObjs {
+			describedObjects[objId] = objDescribe
+		}
 	}
 
 	manifest := Manifest{
@@ -215,7 +218,7 @@ func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvi
 	// fill in the missing information
 	for projId, files := range mRaw {
 		for _, f := range files {
-			fDesc, ok := dataObjs[f.Id]
+			fDesc, ok := describedObjects[f.Id]
 			if !ok {
 				return nil, fmt.Errorf("File %s was not described", f.Id)
 			}
