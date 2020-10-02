@@ -21,7 +21,7 @@ import (
 
 const (
 	maxRetryCount      = 10
-	userAgent          = "dxda: DNAnexus download agent"
+	userAgent          = "dxda: DNAnexus download agent " + Version
 	reqTimeout         = 15  // seconds
 	attemptTimeoutInit = 2   // seconds
 	attemptTimeoutMax  = 600 // seconds
