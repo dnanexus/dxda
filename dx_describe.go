@@ -3,7 +3,6 @@ package dxda
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 )
@@ -132,7 +131,7 @@ func submit(
 		}
 	}
 
-	fmt.Printf("payload = %s", string(payload))
+	//fmt.Printf("payload = %s", string(payload))
 
 	repJs, err := DxAPI(ctx, httpClient, numRetriesDefault, dxEnv, "system/findDataObjects", string(payload))
 
