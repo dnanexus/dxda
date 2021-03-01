@@ -1,9 +1,6 @@
 import argparse
 import dxpy
-from pprint import pprint
-import json
 from dxpy.utils.resolver import resolve_existing_path
-import sys
 import collections
 import os
 
