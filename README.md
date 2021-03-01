@@ -124,10 +124,10 @@ By default, `dx-download-agent` uses certificates installed on the system to cre
 
 ## Creating and filtering manifest files
 
-For convenience, the `create_manifest_bulk.py` file in the `scripts/` directory is one way to create manifest files for the download agent.  This script requires that the [dx-toolkit](https://github.com/dnanexus/dx-toolkit) is installed on your system and that you are logged in to the DNAnexus platform.   An example of how it can be used:
+For convenience, the `create_manifest.py` file in the `scripts/` directory is one way to create manifest files for the download agent.  This script requires that the [dx-toolkit](https://github.com/dnanexus/dx-toolkit) is installed on your system and that you are logged in to the DNAnexus platform.   An example of how it can be used:
 
 ```bash
-python create_manifest_bulk.py --folder "Project:/Folder" --recursive --outfile "myfiles.manifest.json.bz2"
+python create_manifestpy --folder "Project:/Folder" --recursive --output_file "myfiles.manifest.json.bz2"
 ```
 
 Here, a manifest is created for recursively *all* files under the project name `Project` and in the folder `Folder`.
