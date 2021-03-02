@@ -83,6 +83,9 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	if _, err := os.Stat(fname + ".stats.db"); os.IsNotExist(err) {
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
 		st.CreateManifestDB(*manifest, fname)
+	} else {
+		fmt.Printf("Ensuring files are created for existing manifest \n")
+		st.PrepareFilesForDownload(*manifest)
 	}
 
 	if err := st.CheckDiskSpace(); err != nil {

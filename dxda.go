@@ -412,13 +412,13 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 
 	// TODO Log network settings and other helpful info for debugging
 	PrintLogAndOut("Preparing files for download\n")
-	st.prepareFilesForDownload(manifest)
+	st.PrepareFilesForDownload(manifest)
 }
 
 // create an empty file for each download filepath.
 //
 // TODO: Optimize this for only files that need to be downloaded
-func (st *State) prepareFilesForDownload(m Manifest) {
+func (st *State) PrepareFilesForDownload(m Manifest) {
 	for _, f := range m.Files {
 		// Create directory structure and initialize file if it doesn't exist
 		wd, err := os.Getwd()
