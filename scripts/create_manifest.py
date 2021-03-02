@@ -42,7 +42,7 @@ def main():
             print("Processed {} files".format(i))
 
     # Dedup
-
+    # Duplicate filenames are converted to filename_fileid
     dups = [item for item, count in collections.Counter([x['name'] for x in manifest[project]]).items() if count > 1]
     for x in manifest[project]:
         if x['name'] in dups:

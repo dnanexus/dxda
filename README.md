@@ -127,7 +127,7 @@ By default, `dx-download-agent` uses certificates installed on the system to cre
 For convenience, the `create_manifest.py` file in the `scripts/` directory is one way to create manifest files for the download agent.  This script requires that the [dx-toolkit](https://github.com/dnanexus/dx-toolkit) is installed on your system and that you are logged in to the DNAnexus platform.   An example of how it can be used:
 
 ```bash
-python create_manifestpy --folder "Project:/Folder" --recursive --output_file "myfiles.manifest.json.bz2"
+python3 create_manifestpy --folder "Project:/Folder" --recursive --output_file "myfiles.manifest.json.bz2"
 ```
 
 Here, a manifest is created for recursively *all* files under the project name `Project` and in the folder `Folder`.
@@ -135,7 +135,7 @@ Here, a manifest is created for recursively *all* files under the project name `
 The manifest can be subsequently filtered using the `filter_manifest.py` script.  For example, if you want to capture files in a particular folder (e.g. `Folder`) with `testcall` in them (e.g. `/Folder/ALL.chr22._testcall_20190222.genotypes.vcf.gz`), you can run the command:
 
 ```bash
-$ python filter_manifest.py manifest.json.bz2 '^/Folder.*testcall.*'
+$ python3 filter_manifest.py manifest.json.bz2 '^/Folder.*testcall.*'
 ```
 
 where the second argument given to the script is a regular expression on the entire path (folder + filename).
@@ -145,7 +145,7 @@ where the second argument given to the script is a regular expression on the ent
 In some cases it may be desirable to split the download manifest into multiple manifest files for testing purposes or to manage multiple downloads of an entire data set across different environments.  To split the file, we provide a simple Python utility that requires no additional packages in the `scripts/` directory.  For example, executing the command:
 
 ```
-python scripts/split_manifest.py manifest.json.bz2 -n 100
+python3 scripts/split_manifest.py manifest.json.bz2 -n 100
 ```
 
 will create manifest files containing each containing 100 files per project.  For example if there are 300 total files in manifest.json.bz2, the output of this command will create three files named: `manifest_001.json.bz2`, `manifest_002.json.bz2`, and `manifest_003.json.bz2`.   Each of these files can be used independently with the download agent.
