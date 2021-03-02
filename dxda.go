@@ -956,7 +956,9 @@ func (st *State) resetRegularFile(p DBPartRegular) {
 	folder := filepath.Join(wd, p.Folder)
 	fname := filepath.Join(folder, p.FileName)
 	err = os.Truncate(fname, 0)
-	check(err)
+	if !os.IsNotExist(err) {
+		check(err)
+	}
 
 	st.mutex.Lock()
 	defer st.mutex.Unlock()
@@ -980,8 +982,9 @@ func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 	folder := filepath.Join(wd, slnk.Folder)
 	fname := filepath.Join(folder, slnk.Name)
 	err = os.Truncate(fname, 0)
-	check(err)
-
+	if !os.IsNotExist(err) {
+		check(err)
+	}
 	st.mutex.Lock()
 	defer st.mutex.Unlock()
 
