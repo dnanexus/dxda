@@ -1,12 +1,10 @@
 import argparse
 import dxpy
-from pprint import pprint
-import json
-import bz2
 from dxpy.utils.resolver import resolve_existing_path
+import collections
+import os
 
 import compat
-
 
 def fileID2manifest(fdetails, project):
     """
@@ -16,52 +14,44 @@ def fileID2manifest(fdetails, project):
     """
     if not fdetails:
         raise "Describe output for a file is None"
-
-    # TODO: oddly this pruning seemed necessary when doing the system describe not perhaps not with list_folder
     pruned = {}
     pruned['id'] = fdetails['id']
     pruned['name'] = fdetails['name']
     pruned['folder'] = fdetails['folder']
-    # Symlinks do not contain parts
+     # Symlinks do not contain parts
     if fdetails['parts']:
-      pruned['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size"} for pid, pdetails in fdetails['parts'].items()}
+        pruned['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size"} for pid, pdetails in fdetails['parts'].items()}
     return pruned
 
-def generate_manifest_file(folder, project, outfile, recursive):
-  manifest = { project: [] }
-  def add_folder_to_manifest(subfolder):
-      print("Adding files for folder {}".format(subfolder))
-      inputs = {}
-      inputs['folder'] = subfolder
-      inputs['describe'] = {
-        'fields': {'id': True, 'name': True, 'folder': True, 'parts': True }
-      }
-      output = dxpy.api.project_list_folder(project, input_params=inputs)
-
-      # leave only files. remove dx-objects such as records
-      files = list(filter(lambda obj: obj['id'].startswith('file-'),
-                          output['objects']))
-      manifest[project] += [fileID2manifest(obj['describe'], project) for obj in files]
-      if recursive:
-        for subf in output['folders']:
-            add_folder_to_manifest(subf)
-
-  add_folder_to_manifest(folder)
-  compat.write_manifest_to_file(outfile, manifest)
-
 def main():
-    parser = argparse.ArgumentParser(description='Create a manifest file from a DNAnexus directory')
-    parser.add_argument('directory')
-    parser.add_argument('-r', '--recursive', help='Recursively traverse folders and append to manifest', action='store_true')
-
-    parser.add_argument('--outfile', help='Name of the output file', default='manifest.json.bz2')
+    parser = argparse.ArgumentParser(description='Create a manifest file for a particular folder in a project')
+    parser.add_argument('folder', help='a folder in the current DNAnexus project')
+    parser.add_argument('-o', '--output_file', help='Name of the output file', default='manifest.json.bz2')
+    parser.add_argument('-r', '--recursive', help='Recursively traverse folders and append to manifest', action='store_true', default=False)
 
     args = parser.parse_args()
 
-    project, folder, _ = resolve_existing_path(args.directory)
+    project, folder, _ = resolve_existing_path(args.folder)
 
-    generate_manifest_file(folder, project, args.outfile, args.recursive)
-    print("Manifest file written to {}".format(args.outfile))
+    ids = dxpy.find_data_objects(classname='file', first_page_size=1000, state='closed', describe={'fields': {'id': True, 'name': True, 'folder': True, 'parts': True, 'state': True, 'archivalState': True }}, project=project, folder=folder, recurse=args.recursive)
+    manifest = { project: [] }
+
+    for i,f in enumerate(ids):
+        manifest[project].append(fileID2manifest(f['describe'], project))
+        if i%1000 == 0 and i != 0:
+            print("Processed {} files".format(i))
+
+    # Dedup
+    # Duplicate filenames are converted to filename_fileid
+    dups = [item for item, count in collections.Counter([x['name'] for x in manifest[project]]).items() if count > 1]
+    for x in manifest[project]:
+        if x['name'] in dups:
+            fname, fext = os.path.splitext(x['name'])
+            x['name'] = fname + "_" + x['id'] + fext
+
+    compat.write_manifest_to_file(args.output_file, manifest)
+    print("Manifest file written to {}".format(args.output_file))
+    print("Total {} objects".format(len(manifest[project])))
 
 if __name__ == "__main__":
     main()

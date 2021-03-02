@@ -11,7 +11,7 @@ def main():
     parser = argparse.ArgumentParser(description='Filter a manifest file by a regular expression on file path (folder and name)')
     parser.add_argument('manifest_file', help='BZIP2-compressed JSON manifest')
     parser.add_argument('regex', help="Regular expression")
-    parser.add_argument('--output_file', required=False, default='filtered_manifest.json.bz2', help="Output file name")
+    parser.add_argument('-o', '--output_file', required=False, default='filtered_manifest.json.bz2', help="Output file name")
     args = parser.parse_args()
 
     with open(args.manifest_file, "rb") as mf:
