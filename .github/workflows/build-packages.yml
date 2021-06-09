@@ -5,6 +5,10 @@ on:
     types:
       - created
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   macos:
     name: Macos build
