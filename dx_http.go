@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,7 +31,7 @@ const (
 	// handling the case of receiving less data than we
 	// asked for
 	badLengthTimeout    = 5 // seconds
-	badLengthNumRetries = 3
+	badLengthNumRetries = 10
 )
 
 type HttpError struct {
@@ -276,6 +277,8 @@ func DxHttpRequest(
 			return response, nil
 		}
 
+		log.Printf("%T Error in http request: %s", err, err.Error())
+
 		// triage the error
 		switch err.(type) {
 		case *HttpError:
@@ -286,10 +289,18 @@ func DxHttpRequest(
 			}
 			// A retryable http error.
 			continue
-
+		case *net.OpError:
+			if opErr, ok := err.(*net.OpError); ok {
+				if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
+					if syscallErr.Err == syscall.ECONNRESET {
+						continue
+					}
+				}
+			}
+			// connection error/timeout error/library error. This is non retryable
+			return nil, err
 		default:
 			// connection error/timeout error/library error. This is non retryable
-			log.Printf(err.Error())
 			return nil, err
 		}
 	}

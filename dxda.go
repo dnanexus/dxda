@@ -31,7 +31,7 @@ const (
 	maxNumThreads = 32
 
 	numRetries                     = 10
-	numRetriesChecksumMismatch     = 3
+	numRetriesChecksumMismatch     = 10
 	secondsInYear              int = 60 * 60 * 24 * 365
 )
 
