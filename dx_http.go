@@ -13,9 +13,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,7 +32,7 @@ const (
 	// handling the case of receiving less data than we
 	// asked for
 	badLengthTimeout    = 5 // seconds
-	badLengthNumRetries = 3
+	badLengthNumRetries = 10
 )
 
 type HttpError struct {
@@ -256,7 +258,7 @@ func DxHttpRequest(
 	client *http.Client,
 	numRetries int,
 	requestType string,
-	url string,
+	URL string,
 	headers map[string]string,
 	data []byte) (*http.Response, error) {
 
@@ -270,11 +272,13 @@ func DxHttpRequest(
 			attemptTimeout = MinInt(2*attemptTimeout, attemptTimeoutMax)
 		}
 		var response *http.Response
-		response, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
+		response, err = dxHttpRequestCore(ctx, client, requestType, URL, headers, data)
 		if err == nil {
 			// http request went well, return the body
 			return response, nil
 		}
+
+		log.Printf("%T Error in http request: %s", err, err.Error())
 
 		// triage the error
 		switch err.(type) {
@@ -286,15 +290,20 @@ func DxHttpRequest(
 			}
 			// A retryable http error.
 			continue
-
+		case *url.Error:
+			// Retry ECONNREFUSED, ECONNRESET
+			if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+				continue
+			} else {
+				return nil, err
+			}
 		default:
-			// connection error/timeout error/library error. This is non retryable
-			log.Printf(err.Error())
+			// Other connection error/timeout error/library error. This is non retryable
 			return nil, err
 		}
 	}
 	log.Printf("%s request to '%s' failed after %d attempts, err=%s",
-		requestType, url, tCnt, err.Error())
+		requestType, URL, tCnt, err.Error())
 	return nil, err
 }
 

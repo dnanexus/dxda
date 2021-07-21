@@ -1,6 +1,6 @@
 module github.com/dnanexus/dxda
 
-go 1.14
+go 1.16
 
 require (
 	github.com/google/subcommands v1.2.0
