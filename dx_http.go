@@ -292,13 +292,11 @@ func DxHttpRequest(
 			continue
 		case *url.Error:
 			// Retry ECONNREFUSED, ECONNRESET
-			if errors.Is(err, syscall.ECONNREFUSED) {
+			if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
 				continue
+			} else {
+				return nil, err
 			}
-			if errors.Is(err, syscall.ECONNRESET) {
-				continue
-			}
-			continue
 		default:
 			// Other connection error/timeout error/library error. This is non retryable
 			return nil, err
