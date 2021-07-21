@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -257,7 +258,7 @@ func DxHttpRequest(
 	client *http.Client,
 	numRetries int,
 	requestType string,
-	url string,
+	URL string,
 	headers map[string]string,
 	data []byte) (*http.Response, error) {
 
@@ -271,7 +272,7 @@ func DxHttpRequest(
 			attemptTimeout = MinInt(2*attemptTimeout, attemptTimeoutMax)
 		}
 		var response *http.Response
-		response, err = dxHttpRequestCore(ctx, client, requestType, url, headers, data)
+		response, err = dxHttpRequestCore(ctx, client, requestType, URL, headers, data)
 		if err == nil {
 			// http request went well, return the body
 			return response, nil
@@ -289,23 +290,22 @@ func DxHttpRequest(
 			}
 			// A retryable http error.
 			continue
-		case *net.OpError:
-			if opErr, ok := err.(*net.OpError); ok {
-				if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
-					if syscallErr.Err == syscall.ECONNRESET {
-						continue
-					}
-				}
+		case *url.Error:
+			// Retry ECONNREFUSED, ECONNRESET
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				continue
 			}
-			// connection error/timeout error/library error. This is non retryable
-			return nil, err
+			if errors.Is(err, syscall.ECONNRESET) {
+				continue
+			}
+			continue
 		default:
-			// connection error/timeout error/library error. This is non retryable
+			// Other connection error/timeout error/library error. This is non retryable
 			return nil, err
 		}
 	}
 	log.Printf("%s request to '%s' failed after %d attempts, err=%s",
-		requestType, url, tCnt, err.Error())
+		requestType, URL, tCnt, err.Error())
 	return nil, err
 }
 
