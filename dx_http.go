@@ -131,7 +131,7 @@ func isRetryable(ctx context.Context, requestType string, status int) bool {
 	// Bad gateway
 	// Sometimes caused by s3 closing the connection to the worker's
 	// download proxy. Retryable inside a job.
-	if status == 502 && os.Getenv("DX_JOB_ID") != "" {
+	if status == 502 {
 		return true
 	}
 

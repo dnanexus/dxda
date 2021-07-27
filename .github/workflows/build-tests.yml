@@ -17,7 +17,7 @@ jobs:
         - uses: actions/checkout@v2
         - uses: actions/setup-go@v2
           with:
-            go-version: '^1.14.2'
+            go-version: '1.16.6'
         - name: Build Macos executable
           run: |
             set -x
@@ -35,7 +35,7 @@ jobs:
         - uses: actions/checkout@v2
         - uses: actions/setup-go@v2
           with:
-            go-version: '^1.14.2'
+            go-version: '1.16.6'
         - name: Build Windows executable
           run: |
             go build -o dx-download-agent.exe cmd/dx-download-agent/dx-download-agent.go
@@ -51,7 +51,7 @@ jobs:
         - uses: actions/checkout@v2
         - uses: actions/setup-go@v2
           with:
-            go-version: '^1.14.2'
+            go-version: '1.16.6'
         - name: apt-get dependencies
           run: sudo apt-get install -y build-essential
         - name: Build Linux executable
