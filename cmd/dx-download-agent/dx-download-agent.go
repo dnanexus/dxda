@@ -180,6 +180,48 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	return subcommands.ExitSuccess
 }
 
+type createManifestCmd struct {
+	folderPath string
+	recurse    bool
+	outputFile string
+}
+
+const createManifestUsage = "dx-download-agent create-manifest -recurse -path project-xxx:/folder/to/use"
+
+func (*createManifestCmd) Name() string { return "create-manifest" }
+func (*createManifestCmd) Synopsis() string {
+	return "Generate a manifest file for a folder in a project"
+}
+func (*createManifestCmd) Usage() string {
+	return createManifestUsage
+}
+func (p *createManifestCmd) SetFlags(f *flag.FlagSet) {
+	f.BoolVar(&p.recurse, "recurse", false, "Recursively traverse folders and append to manifest")
+	f.StringVar(&p.outputFile, "output", "manifest.json.bz2", "Output filename")
+	f.StringVar(&p.folderPath, "path", "", "Project and folder path to generate manifest. e.g. 'project-xxx:/folder/to/use'")
+}
+
+func (p *createManifestCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	// TODO: Is there a generic way to do this using subcommands?
+	if len(f.Args()) == 0 {
+		fmt.Println(createManifestUsage)
+		os.Exit(1)
+	}
+
+	
+	dxEnv, _, err := dxda.GetDxEnvironment()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	dxda.CreateManifest(dxEnv, f);
+
+	return subcommands.ExitSuccess
+}
+
+//if strings.HasPrefix(projectId, "project-") || strings.HasPrefix(projectId, "container-") {
+
 // get the version
 type versionCmd struct {
 }
