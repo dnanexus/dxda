@@ -75,7 +75,7 @@ jobs:
             asset_content_type: binary/octet-stream
   linux:
     name: Linux build
-    runs-on: ubuntu-16.04
+    runs-on: ubuntu-20.04
     env:
       GOOS: linux
       GOARCH: amd64
