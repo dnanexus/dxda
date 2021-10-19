@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,7 +24,6 @@ import (
 
 const (
 	maxRetryCount      = 10
-	userAgent          = "dxda: DNAnexus download agent " + Version
 	reqTimeout         = 15  // seconds
 	attemptTimeoutInit = 2   // seconds
 	attemptTimeoutMax  = 600 // seconds
@@ -34,6 +34,9 @@ const (
 	badLengthTimeout    = 5 // seconds
 	badLengthNumRetries = 10
 )
+
+// example 'dxda/v0.1.2 (linux)
+var UserAgent = fmt.Sprintf("dxda/%s (%s)", Version, runtime.GOOS)
 
 type HttpError struct {
 	Message             []byte
