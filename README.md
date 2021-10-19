@@ -158,7 +158,7 @@ will create manifest files containing each containing 100 files per project.  Fo
 To execute `dx-download-agent` via its docker image, simply replace calls to `dx-download-agent ARGS` with `docker run dnanexus/dxda ARGS`.  Note that you will need to mount your local files and set appropriate environment variables to execute.  For example:
 
 ```
-docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda:v0.1.4 download -max_threads=20 manifest.json.bz2
+docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda:sha-c5d258d download -max_threads=20 manifest.json.bz2
 ```
 
 This repository can be used directly as a Go module as well.  In the `cmd/dx-download-agent` directory, the `dx-download-agent.go` file is an example of how it can be used.
