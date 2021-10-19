@@ -372,7 +372,7 @@ func DxAPI(
 		return nil, err
 	}
 	headers := map[string]string{
-		"User-Agent":    userAgent,
+		"User-Agent":    UserAgent,
 		"Authorization": fmt.Sprintf("Bearer %s", dxEnv.Token),
 		"Content-Type":  "application/json",
 	}
