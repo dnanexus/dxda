@@ -4,9 +4,20 @@ import json
 import bz2
 import re
 import os
+import sys
 
-import compat
+# Provide compatibility between python 2 and 3
+USING_PYTHON2 = True if sys.version_info < (3, 0) else False
 
+def write_manifest_to_file(outfile, manifest):
+    if USING_PYTHON2:
+        with open(outfile, "w") as f:
+            f.write(bz2.compress(json.dumps(manifest, indent=2, sort_keys=True)))
+    else:
+        # python 3 requires opening the file in binary mode
+        with open(outfile, "wb") as f:
+            value = json.dumps(manifest, indent=2, sort_keys=True)
+            f.write(bz2.compress(value.encode()))
 def main():
     parser = argparse.ArgumentParser(description='Filter a manifest file by a regular expression on file path (folder and name)')
     parser.add_argument('manifest_file', help='BZIP2-compressed JSON manifest')
@@ -20,7 +31,7 @@ def main():
     for project, file_list in manifest.items():
         new_manifest[project] = [f for f in file_list if re.match(args.regex, os.path.join(f['folder'], f['name']))]
 
-    compat.write_manifest_to_file(args.output_file, new_manifest)
+    write_manifest_to_file(args.output_file, new_manifest)
 
 
 if __name__ == "__main__":
