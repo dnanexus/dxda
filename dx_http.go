@@ -268,6 +268,7 @@ func DxHttpRequest(
 	attemptTimeout := attemptTimeoutInit
 	var tCnt int
 	var err error
+	contextCanceledCnt := 0
 	for tCnt = 0; tCnt <= numRetries; tCnt++ {
 		if tCnt > 0 {
 			// sleep before retrying. Use bounded exponential backoff.
@@ -296,6 +297,13 @@ func DxHttpRequest(
 		case *url.Error:
 			// Retry ECONNREFUSED, ECONNRESET
 			if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+				continue
+				// Retry context timeout once
+			} else if errors.Is(err, context.Canceled) {
+				contextCanceledCnt++
+				if contextCanceledCnt > 1 {
+					return nil, err
+				}
 				continue
 			} else {
 				return nil, err
