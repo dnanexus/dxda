@@ -9,14 +9,14 @@ def chunks(l, n):
         yield l[i:i + n]
 
 def split_manifest(manifest_file, num_files):
-    with open(manifest_file) as mf:
+    with open(manifest_file, "rb") as mf:
         manifest = json.loads(bz2.decompress(mf.read()))
         for project, file_list in manifest.items():
             for i, file_subset in enumerate(chunks(file_list, num_files)):
                 manifest_subset = { project: file_subset }
                 outfile = "{}_{:03d}.json.bz2".format(manifest_file.rstrip(".json.bz2"), i+1)
-                with open(outfile, "w") as f:
-                    f.write(bz2.compress(json.dumps(manifest_subset, indent=2, sort_keys=True)))
+                with open(outfile, "wb") as f:
+                    f.write(bz2.compress(json.dumps(manifest_subset, indent=2, sort_keys=True).encode()))
 
 
 def main():
