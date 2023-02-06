@@ -78,7 +78,7 @@ dx-download-agent inspect exome_bams_manifest.json.bz2
 ```
 This command will perfrom an inspection of the parts of files currently downloaded to disk and ensure that their MD5sums match the manifest. If a file is missing or an MD5sum does not match, the download agent will report the affected files. After the inspection is complete, you can issue a `download` command again to resolve the issues.
 
-**WARNING:** Please note, that simple rerunning `dx-download-agent download` command will NOT fix any missing or modified files! It is necessary to run `dx-download-agent inspect` command first to detect the changes and mark them for redownload. More details can be found in the section [Moving downloaded files](#moving-downloaded-files).
+**WARNING:** Please note, that simple rerunning `dx-download-agent download` command will NOT redownload any missing or modified files! It is necessary to run `dx-download-agent inspect` command first to detect the changes and mark them for redownload. More details can be found in the section [Moving downloaded files](#moving-downloaded-files).
 
 ## Execution options
 
