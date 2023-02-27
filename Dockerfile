@@ -1,19 +1,18 @@
 # Development Dockerfile for dxda (Linux)
-FROM ubuntu:16.04
+FROM ubuntu:22.04
 
 # Get dependencies for running Go
 RUN apt-get update && apt-get install -y wget git build-essential && \
-    wget https://dl.google.com/go/go1.13.6.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.13.6.linux-amd64.tar.gz
+    wget https://dl.google.com/go/go1.16.6.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.16.6.linux-amd64.tar.gz
 
 # Set environment variables for Go
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
+ENV GO111MODULE=on
 
 # Install Go packages and Download agent executables
-RUN go get github.com/google/subcommands && go install github.com/google/subcommands && \
-    go get github.com/dnanexus/dxda && go install github.com/dnanexus/dxda && \
-    go install github.com/dnanexus/dxda/cmd/dx-download-agent
+RUN go install github.com/dnanexus/dxda/cmd/dx-download-agent@latest
 
 # Build architecture-specific binaries and packages
 RUN mkdir -p /builds/dx-download-agent-osx /builds/dx-download-agent-linux && \
