@@ -12,7 +12,7 @@ ENV GOPATH="/go"
 ENV GO111MODULE=on
 
 # Install Go packages and Download agent executables
-RUN go install github.com/dnanexus/dxda/cmd/dx-download-agent@latest
+RUN go install github.com/dnanexus/dxda/cmd/dx-download-agent@master
 
 # Build architecture-specific binaries and packages
 RUN mkdir -p /builds/dx-download-agent-osx /builds/dx-download-agent-linux && \
