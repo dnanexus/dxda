@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y wget git build-essential && \
 # Set environment variables for Go
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
-ENV GO111MODULE=on
 
 # Install Go packages and Download agent executables
 RUN go install github.com/dnanexus/dxda/cmd/dx-download-agent@master
