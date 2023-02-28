@@ -20,7 +20,7 @@ const (
 )
 const (
 	// Limit on an http request to S3/Azure object storage
-	requestOverallTimout = 10 * time.Minute
+	requestOverallTimout = 6 * time.Minute
 
 	// An API request to the dnanexus servers should never take more
 	// than this amount of time
@@ -39,7 +39,6 @@ type Opts struct {
 }
 
 // A subset of the configuration parameters that the dx-toolkit uses.
-//
 type DXEnvironment struct {
 	ApiServerHost     string `json:"apiServerHost"`
 	ApiServerPort     int    `json:"apiServerPort"`
