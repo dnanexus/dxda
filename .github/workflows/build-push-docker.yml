@@ -21,6 +21,3 @@ jobs:
                 repository: dnanexus/dxda
                 tag_with_ref: true
                 tag_with_sha: true
-                platforms:
-                  - linux/amd64
-                  - linux/arm64
