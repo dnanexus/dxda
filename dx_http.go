@@ -31,8 +31,10 @@ const (
 
 	// handling the case of receiving less data than we
 	// asked for
-	badLengthTimeout    = 5 // seconds
-	badLengthNumRetries = 10
+	badLengthTimeout          = 5 // seconds
+	badLengthNumRetries       = 10
+	contextCanceledTimeout    = 20 // seconds
+	contextCanceledNumRetries = 2
 )
 
 // example 'dxda/v0.1.2 (linux)
@@ -255,7 +257,6 @@ func dxHttpRequestCore(
 }
 
 // Add retries around the core http-request method
-//
 func DxHttpRequest(
 	ctx context.Context,
 	client *http.Client,
@@ -268,7 +269,7 @@ func DxHttpRequest(
 	attemptTimeout := attemptTimeoutInit
 	var tCnt int
 	var err error
-	contextCanceledCnt := 0
+
 	for tCnt = 0; tCnt <= numRetries; tCnt++ {
 		if tCnt > 0 {
 			// sleep before retrying. Use bounded exponential backoff.
@@ -298,13 +299,6 @@ func DxHttpRequest(
 			// Retry ECONNREFUSED, ECONNRESET
 			if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
 				continue
-				// Retry context timeout once
-			} else if errors.Is(err, context.Canceled) {
-				contextCanceledCnt++
-				if contextCanceledCnt > 1 {
-					return nil, err
-				}
-				continue
 			} else {
 				return nil, err
 			}
@@ -322,7 +316,6 @@ func DxHttpRequest(
 //
 // Add retries around the core http-request method, especially in the case of
 // short reads.
-//
 func DxHttpRequestData(
 	ctx context.Context,
 	httpClient *http.Client,
@@ -333,41 +326,64 @@ func DxHttpRequestData(
 	dataLen int,
 	memoryBuf []byte) error {
 
-	// Safety procedure to force timeout to prevent hanging
-	ctx2, cancel := context.WithCancel(ctx)
-	timer := time.AfterFunc(requestOverallTimout, func() {
-		cancel()
-	})
-	defer timer.Stop()
+	for ccCnt := 0; ccCnt < contextCanceledNumRetries; ccCnt++ {
+		// Safety procedure to force timeout to prevent hanging
+		ctx2, cancel := context.WithCancel(ctx)
+		timer := time.AfterFunc(requestOverallTimout, func() {
+			cancel()
+		})
+		defer timer.Stop()
 
-	for i := 0; i < badLengthNumRetries; i++ {
-		resp, err := DxHttpRequest(ctx2, httpClient, numRetries, requestType, url, headers, data)
-		if err != nil {
-			return err
+		contextCanceled := false
+		bytesFetched := 0
+		for i := 0; i < badLengthNumRetries; i++ {
+			resp, err := DxHttpRequest(ctx2, httpClient, numRetries, requestType, url, headers, data)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					contextCanceled = true
+					break
+				} else {
+					return err
+				}
+			}
+
+			//body, _ := ioutil.ReadAll(resp.Body)
+			// we are saving an allocation by using a pre-allocated
+			// buffer.
+			recvLen, err := io.ReadAtLeast(resp.Body, memoryBuf, dataLen)
+			resp.Body.Close()
+
+			if err != nil && errors.Is(err, context.Canceled) {
+				contextCanceled = true
+				bytesFetched = recvLen
+				break
+			}
+
+			// check that the length is correct
+			if recvLen != dataLen {
+				// Note: it would be preferable to collect partial results and concatenate them.
+				log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, dataLen)
+				time.Sleep(time.Duration(badLengthTimeout) * time.Second)
+				continue
+			}
+			return nil
 		}
 
-		//body, _ := ioutil.ReadAll(resp.Body)
-		// we are saving an allocation by using a pre-allocated
-		// buffer.
-		recvLen, _ := io.ReadAtLeast(resp.Body, memoryBuf, dataLen)
-		resp.Body.Close()
-
-		// check that the length is correct
-		if recvLen != dataLen {
-			// Note: it would be preferable to collect partial results and concatenate them.
-			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, dataLen)
-			time.Sleep(time.Duration(badLengthTimeout) * time.Second)
-			continue
+		if !contextCanceled {
+			return fmt.Errorf("%s request to %s failed after %d attempts",
+				requestType, url, badLengthNumRetries)
 		}
-		return nil
+
+		log.Printf("Filepart was not successfully downloaded within %.f minutes (only %d of %d bytes fetched). Retrying (attempt %d of %d).",
+			requestOverallTimout.Minutes(), bytesFetched, dataLen, ccCnt+1, contextCanceledNumRetries)
+		time.Sleep(time.Duration(contextCanceledTimeout) * time.Second)
 	}
 
-	return fmt.Errorf("%s request to %s failed after %d attempts",
-		requestType, url, badLengthNumRetries)
+	return fmt.Errorf("%s request to %s failed after %d attempts with context canceled error",
+		requestType, url, contextCanceledNumRetries)
 }
 
 // DxAPI - Function to wrap a generic API call to DNAnexus
-//
 func DxAPI(
 	ctx context.Context,
 	client *http.Client,
