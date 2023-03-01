@@ -7,7 +7,8 @@ ARG TARGETARCH
 ENV GOVERSION="1.16.6"
 RUN apt-get update && apt-get install -y wget git build-essential && \
     wget https://dl.google.com/go/go${GOVERSION}.linux-${TARGETARCH}.tar.gz && \
-    tar -C /usr/local -xzf go${GOVERSION}.linux-${TARGETARCH}.tar.gz
+    tar -C /usr/local -xzf go${GOVERSION}.linux-${TARGETARCH}.tar.gz && \ 
+    rm go${GOVERSION}.linux-${TARGETARCH}.tar.gz
 
 # Set environment variables for Go
 ENV PATH="/usr/local/go/bin:${PATH}"
