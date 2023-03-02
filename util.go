@@ -28,7 +28,7 @@ const (
 
 	// Extracted automatically with a shell script, so keep the format:
 	// version = XXXX
-	Version = "v0.5.11"
+	Version = "v0.5.12"
 )
 
 // Configuration options for the download agent
