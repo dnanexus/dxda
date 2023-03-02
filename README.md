@@ -60,7 +60,7 @@ reflects not only network bandwidth, but also the IO capability of your machine.
 
 A download log contains more detailed information about the download should an error occur.  If an error does occur and you do not understand how to deal with it, please contact `support@dnanexus.com` with the log file attached and we will assist you.
 
-**WARNING:** Please note, that simple rerunning `dx-download-agent download` command will NOT redownload any manually moved, deleted or modified downloaded files! It is necessary to run `dx-download-agent inspect` command (describe below) first to detect the changes and mark them for redownload. More details can be found in the section [Moving downloaded files](#moving-downloaded-files).
+Please note that rerunning `dx-download-agent download` command will NOT re-download any previously downloaded files that were subsequently moved, deleted or modified.  Please run `dx-download-agent inspect` (described below) to detect any changes to previously downloaded files and mark them for re-download.  See [Moving downloaded files](#moving-downloaded-files) for more details.
 
 You can query the progress of an existing download in a separate terminal
 
