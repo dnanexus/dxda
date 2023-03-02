@@ -123,7 +123,7 @@ Currently, we offer following image tags:
 
 * `latest` - the most recent build of master branch
 * `0.5.11`, `0.5.12`, ... - dedicated tags for each release (starting from 0.5.11)
-* `<sha>` - development builds for each commit on master branch
+* `<commit_hash>` - development builds for each commit on master branch
 
 Example usage:
 
