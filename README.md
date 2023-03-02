@@ -116,6 +116,25 @@ The manifest includes four fields for each file: `file_id`, `project`, `name`, a
 
 It is possible to download DNAx symbolic links, which do not have parts. The required fields for symbolic links are `file_id`, `project`, and `name`. Note that a symbolic link has a global MD5 checksum, which is checked at the end of the download.
 
+## Running using Docker
+Aside the self-contained Go binary we provide also Dockerized version. It can be used in a very similar manner as a standalone executable with exception of neccessity to mount your local folder and to provide your DX API token.
+
+Currently, we offer following image tags:
+
+* `latest` - the most recent build of master branch
+* `0.5.11`, `0.5.12`, ... - dedicated tags for each release (starting from 0.5.11)
+* `<commit_hash>` - development builds for each commit on master branch
+
+Example usage:
+
+```
+$ docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda:latest download -max_threads=20 manifest.json.bz2
+```
+where:
+
+* `$PWD` is a path to directory on your computer to download files to
+* `DX_API_TOKEN` is a token to access our platform (see [Quick start](#quick-start))
+
 ## Proxy and TLS settings
 
 To direct `dx-download-agent` to a proxy, please set the `HTTP_PROXY` environment variable to something like `export HTTP_PROXY=hostname:port`.  `HTTPS_PROXY` is also supported.
@@ -151,19 +170,11 @@ python3 scripts/split_manifest.py manifest.json.bz2 -n 100
 will create manifest files containing each containing 100 files per project.  For example if there are 300 total files in manifest.json.bz2, the output of this command will create three files named: `manifest_001.json.bz2`, `manifest_002.json.bz2`, and `manifest_003.json.bz2`.   Each of these files can be used independently with the download agent.
 
 
-## Development environment and running with Docker
-
-`dx-download-agent` is written in Go and releases of its binary are generally self-contained (i.e. you do not need extra dependencies to run the executable for your architecture).  We also provide a Dockerized version that includes the necessary dependencies to develop for `dxda` and also run it.
-
-To execute `dx-download-agent` via its docker image, simply replace calls to `dx-download-agent ARGS` with `docker run dnanexus/dxda ARGS`.  Note that you will need to mount your local files and set appropriate environment variables to execute.  For example:
-
-```
-docker run -v $PWD:/workdir -w /workdir -e DX_API_TOKEN=$DX_API_TOKEN dnanexus/dxda:sha-c5d258d download -max_threads=20 manifest.json.bz2
-```
+## Development environment
 
 This repository can be used directly as a Go module as well.  In the `cmd/dx-download-agent` directory, the `dx-download-agent.go` file is an example of how it can be used.
 
-For developing and experimenting with the source, the [Dockerfile](https://github.com/dnanexus/dxda/blob/master/Dockerfile) in this repository may be a good start.
+For developing and experimenting with the source inside isolated Docker environment, the [Dockerfile](https://github.com/dnanexus/dxda/blob/master/Dockerfile) in this repository may be a good start.
 
 ## Moving downloaded files
 
