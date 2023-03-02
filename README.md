@@ -78,7 +78,7 @@ To check the integrity of the downloaded files, you can run
 ```
 dx-download-agent inspect exome_bams_manifest.json.bz2
 ```
-This command will perform an inspection of the files and ensure that their MD5sums match the manifest. If a file is missing or an MD5sum does not match, the download agent will report the affected files and you can run a `download` command again to resolve the issues.
+This command will perform an inspection of the files and ensure that their MD5sums match the manifest. If a file is missing or an MD5sum does not match, the download agent will report the affected files and you can then run `dx-download-agent download` again to re-download the affected files.
 
 ## Execution options
 
