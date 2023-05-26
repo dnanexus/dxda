@@ -12,7 +12,7 @@ permissions:
 jobs:
   macos:
     name: Macos build
-    runs-on: macos-10.15
+    runs-on: macos-12
     env:
       GOOS: darwin
       GOARCH: amd64
