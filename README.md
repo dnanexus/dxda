@@ -82,12 +82,12 @@ This command will perform an inspection of the files and ensure that their MD5su
 
 ## Execution options
 
-* `-max_threads` (integer): maximum # of concurrent threads to use when downloading files
+* `-num_threads` (integer): maximum # of concurrent threads to use when downloading or inspecting files
 
 For example, the commmand
 
 ```
-dx-download-agent download -max_threads=20 exome_bams_manifest.json.bz2
+dx-download-agent download -num_threads=20 exome_bams_manifest.json.bz2
 ```
 
 will create a worker pool of 20 threads that will download parts of files in parallel.  A maximum of 20 workers will perform downloads at any time.  Rate-limiting of downloads can be controlled to an extent by varying this number.
