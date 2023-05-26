@@ -21,7 +21,7 @@ type downloadCmd struct {
 
 var err error
 
-const downloadUsage = "dx-download-agent download [-max_threads=N] <manifest.json.bz2>"
+const downloadUsage = "dx-download-agent download [-num_threads=N] <manifest.json.bz2>"
 
 func (*downloadCmd) Name() string     { return "download" }
 func (*downloadCmd) Synopsis() string { return "Download files in a manifest" }
@@ -137,7 +137,8 @@ func (p *progressCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 // inspect the files, and see that there are no checksum errors
 type inspectCmd struct {
-	verbose bool
+	numThreads int
+	verbose    bool
 }
 
 const inspectUsage = "dx-download-agent inspect [-max_threads=N] <manifest.json.bz2>"
@@ -150,6 +151,7 @@ func (*inspectCmd) Usage() string {
 	return downloadUsage
 }
 func (p *inspectCmd) SetFlags(f *flag.FlagSet) {
+	f.IntVar(&p.numThreads, "num_threads", 0, "Number of threads to use when downloading files. By default (or if zero), this number is chosen according to machine memory and CPU constraints.")
 	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
@@ -169,6 +171,7 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 
 	var opts dxda.Opts
 	opts.Verbose = p.verbose
+	opts.NumThreads = p.numThreads
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
