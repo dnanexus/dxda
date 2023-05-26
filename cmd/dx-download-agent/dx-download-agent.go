@@ -141,7 +141,7 @@ type inspectCmd struct {
 	verbose    bool
 }
 
-const inspectUsage = "dx-download-agent inspect [-max_threads=N] <manifest.json.bz2>"
+const inspectUsage = "dx-download-agent inspect [-num_threads=N] <manifest.json.bz2>"
 
 func (*inspectCmd) Name() string { return "inspect" }
 func (*inspectCmd) Synopsis() string {
