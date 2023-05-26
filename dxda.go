@@ -150,7 +150,7 @@ func calcNumThreads(maxChunkSize int64) int {
 	fmt.Printf("number of machine cores: %d\n", numCPUs)
 	fmt.Printf("memory size: %d GiB\n", hwMemoryBytes/GiB)
 
-	numThreads := MinInt(2*numCPUs, maxNumThreads)
+	numThreads := MinInt(numCPUs, maxNumThreads)
 	memoryCostPerThread := 3 * int64(maxChunkSize)
 
 	for numThreads > minNumThreads {
