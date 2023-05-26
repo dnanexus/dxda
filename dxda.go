@@ -150,7 +150,7 @@ func calcNumThreads(maxChunkSize int64) int {
 	fmt.Printf("number of machine cores: %d\n", numCPUs)
 	fmt.Printf("memory size: %d GiB\n", hwMemoryBytes/GiB)
 
-	numThreads := MinInt(2*numCPUs, maxNumThreads)
+	numThreads := MinInt(numCPUs, maxNumThreads)
 	memoryCostPerThread := 3 * int64(maxChunkSize)
 
 	for numThreads > minNumThreads {
@@ -1206,7 +1206,7 @@ func (st *State) checkAllSymlinkIntegrity() bool {
 	close(jobs)
 
 	// start checking threads
-	for w := 1; w <= MinInt(runtime.NumCPU(), st.opts.NumThreads); w++ {
+	for w := 1; w <= st.opts.NumThreads; w++ {
 		wg.Add(1)
 		go st.fileCheckSymlinkWorker(w, jobs, integrityMsgs, &wg)
 	}
