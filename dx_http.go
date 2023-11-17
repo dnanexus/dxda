@@ -283,8 +283,6 @@ func DxHttpRequest(
 			return response, nil
 		}
 
-		log.Printf("%T Error in http request: %s", err, err.Error())
-
 		// triage the error
 		switch err.(type) {
 		case *HttpError:

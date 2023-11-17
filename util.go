@@ -28,7 +28,7 @@ const (
 
 	// Extracted automatically with a shell script, so keep the format:
 	// version = XXXX
-	Version = "v0.6.0"
+	Version = "v0.6.1"
 )
 
 // Configuration options for the download agent
@@ -66,20 +66,20 @@ type DXAuthorization struct {
 }
 
 /*
-   Construct the environment structure. Return an additional string describing
-   the source of the security token.
+Construct the environment structure. Return an additional string describing
+the source of the security token.
 
-   The DXEnvironment has its fields set from the following sources, in order (with
-   later items overriding earlier items):
+The DXEnvironment has its fields set from the following sources, in order (with
+later items overriding earlier items):
 
-   1. Hardcoded defaults
-   2. Environment variables of the format DX_*
-   3. Configuration file ~/.dnanexus_config/environment.json
+1. Hardcoded defaults
+2. Environment variables of the format DX_*
+3. Configuration file ~/.dnanexus_config/environment.json
 
-   If no token can be obtained from these methods, an empty environment is returned.
-   If the token was received from the 'DX_API_TOKEN' environment variable, the second variable in the pair
-   will be the string 'environment'. If it is obtained from a DNAnexus configuration file, the second variable
-   in the pair will be '.dnanexus_config/environment.json'.
+If no token can be obtained from these methods, an empty environment is returned.
+If the token was received from the 'DX_API_TOKEN' environment variable, the second variable in the pair
+will be the string 'environment'. If it is obtained from a DNAnexus configuration file, the second variable
+in the pair will be '.dnanexus_config/environment.json'.
 */
 func GetDxEnvironment() (DXEnvironment, string, error) {
 	obtainedBy := ""
