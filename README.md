@@ -1,14 +1,10 @@
 # dx-download-agent
 
-CLI tool to manage the download of large quantities of files from DNAnexus
-
-[![Build Status](https://travis-ci.org/dnanexus/dxda.svg?branch=master)](https://travis-ci.org/dnanexus/dxda)
-
-**NOTE: This is an early version of this tool and is undergoing testing in a variety of settings.  Please contact DNAnexus if you are interested in seeing if this tool is appropriate for your application.**
+CLI tool to manage the download of files from DNAnexus
 
 ## Quick Start
 
-To get started with `dx-download-agent`, download the the latest pre-compiled binary from the release page.  The download agent accepts two files:
+To get started with `dx-download-agent`, download the the latest pre-compiled binary from the release page.  The download agent takes a manifest file as input.
 
 * `manifest_file`: A BZ2-compressed JSON manifest file that describes, at minimimum, the following information for a download, for example:
 
@@ -30,7 +26,7 @@ To get started with `dx-download-agent`, download the the latest pre-compiled bi
 }
 ```
 
-To start a download process, first [generate a DNAnexus API token](https://documentation.dnanexus.com/user/login-and-logout#generating-an-authentication-token) that is valid for a time period that you plan on downloading the files.  Store it in the following environment variable:
+Before starting a download process, first [generate a DNAnexus API token](https://documentation.dnanexus.com/user/login-and-logout#generating-an-authentication-token) that is valid for a time period that you plan on downloading the files. Store it in the following environment variable:
 
 ```bash
 export DX_API_TOKEN=<INSERT API TOKEN HERE>
@@ -144,7 +140,7 @@ By default, `dx-download-agent` uses certificates installed on the system to cre
 
 ## Creating and filtering manifest files
 
-For convenience, the `create_manifest.py` file in the `scripts/` directory is one way to create manifest files for the download agent.  This script requires that the [dx-toolkit](https://github.com/dnanexus/dx-toolkit) is installed on your system and that you are logged in to the DNAnexus platform.   An example of how it can be used:
+For convenience, the `create_manifest.py` file in the `scripts/` directory is the recommended way to create manifest files for the download agent.  This script requires that the [dx-toolkit](https://github.com/dnanexus/dx-toolkit) is installed on your system and that you are logged in to the DNAnexus platform.   An example of how it can be used:
 
 ```bash
 python3 create_manifest.py "Project:/Folder" --recursive --output_file "myfiles.manifest.json.bz2"
@@ -186,4 +182,8 @@ After successfully downloading (and optionally inspecting post-download) it shou
 
 ## Additional notes
 
-* Only objects of [class File](https://documentation.dnanexus.com/developer/api/introduction-to-data-object-classes) can be downloaded.
+* Only objects of [class File](https://documentation.dnanexus.com/developer/api/introduction-to-data-object-classes) in the `closed` state can be downloaded.
+
+## Support
+
+* For any support, bugs, or suggestions please contact support@dnanexus.com
