@@ -28,7 +28,7 @@ jobs:
             go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
             chmod +x dx-download-agent
         - name: Upload artifact
-          uses: actions/upload-artifact@v2
+          uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
           with:
             name: dx-download-agent-macos
             path: ./dx-download-agent
@@ -60,7 +60,7 @@ jobs:
             go build -o dx-download-agent.exe cmd/dx-download-agent/dx-download-agent.go
             dir
         - name: Upload artifact
-          uses: actions/upload-artifact@v2
+          uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
           with:
             name: dx-download-agent-windows.exe
             path: ./dx-download-agent.exe
@@ -93,7 +93,7 @@ jobs:
             go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
             chmod +x dx-download-agent
         - name: Upload artifact
-          uses: actions/upload-artifact@v2
+          uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
           with:
             name: dx-download-agent-linux
             path: ./dx-download-agent
