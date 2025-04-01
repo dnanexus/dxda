@@ -42,7 +42,7 @@ jobs:
             .\dx-download-agent help
   linux:
     name: Linux build and test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     env:
       GOOS: linux
       GOARCH: amd64

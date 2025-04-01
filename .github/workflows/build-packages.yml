@@ -75,7 +75,7 @@ jobs:
             asset_content_type: binary/octet-stream
   linux:
     name: Linux build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     env:
       GOOS: linux
       GOARCH: amd64
@@ -108,7 +108,7 @@ jobs:
             asset_content_type: binary/octet-stream
   docker:
     name: Build and push Docker image
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Login to Docker Hub
         uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc # v2.2.0
