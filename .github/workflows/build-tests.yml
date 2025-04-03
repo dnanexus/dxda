@@ -8,14 +8,14 @@ on:
 jobs:
   macos:
     name: Macos build
-    runs-on: macos-12
+    runs-on: macos-latest
     env:
       GOOS: darwin
       GOARCH: amd64
       CGO_ENABLED: 1
     steps:
-        - uses: actions/checkout@v2
-        - uses: actions/setup-go@v2
+        - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
           with:
             go-version: '1.20.11'
         - name: Build Macos executable
@@ -32,8 +32,8 @@ jobs:
       GOARCH: amd64
       CGO_ENABLED: 1
     steps:
-        - uses: actions/checkout@v2
-        - uses: actions/setup-go@v2
+        - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
           with:
             go-version: '1.20.11'
         - name: Build Windows executable
@@ -42,14 +42,14 @@ jobs:
             .\dx-download-agent help
   linux:
     name: Linux build and test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     env:
       GOOS: linux
       GOARCH: amd64
       CGO_ENABLED: 1
     steps:
-        - uses: actions/checkout@v2
-        - uses: actions/setup-go@v2
+        - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
           with:
             go-version: '1.20.11'
         - name: apt-get dependencies
