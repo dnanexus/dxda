@@ -75,23 +75,24 @@ jobs:
             asset_content_type: binary/octet-stream
   linux:
     name: Linux build
-    runs-on: ubuntu-22.04
-    env:
-      GOOS: linux
-      GOARCH: amd64
-      CGO_ENABLED: 1
+    runs-on: ubuntu-latest
     steps:
         - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
+        - name: Build builder Docker image
+          uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
           with:
-            go-version: '1.20.11'
-        - name: apt-get dependencies
-          run: sudo apt-get install -y build-essential
+            context: .
+            file: builder.Dockerfile
+            push: false
+            tags: dxda-builder:latest
         - name: Build Linux executable
           run: |
             set -x
+            docker run --rm \
+            -v ${{ github.workspace }}:/dxda \
+            -w /dxda \
+            dxda-builder:latest \
             go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
-            chmod +x dx-download-agent
         - name: Upload artifact
           uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
           with:
@@ -108,7 +109,7 @@ jobs:
             asset_content_type: binary/octet-stream
   docker:
     name: Build and push Docker image
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Login to Docker Hub
         uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc # v2.2.0
