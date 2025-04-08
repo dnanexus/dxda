@@ -93,7 +93,6 @@ jobs:
             -w /dxda \
             dxda-builder:latest \
             go build -o dx-download-agent cmd/dx-download-agent/dx-download-agent.go
-            chmod +x dx-download-agent
         - name: Upload artifact
           uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
           with:
