@@ -12,13 +12,17 @@ def r(v):
 
 def main():
     parser = argparse.ArgumentParser(description='Filter a manifest file by a regular expression on file name')
-    parser.add_argument('manifest_file', help='BZIP2-compressed JSON manifest')
+    parser.add_argument('manifest_file', help='JSON manifest (.json or .json.bz2)')
     parser.add_argument('regex', nargs='?', default=".*", help="Regular expression")
     parser.add_argument("--long", "-l", action='store_true', help="Long description for each file")
     args = parser.parse_args()
     
-    with open(args.manifest_file) as mf:
-        manifest = json.loads(bz2.decompress(mf.read()))
+    with open(args.manifest_file, 'rb') as mf:
+        data = mf.read()
+    if args.manifest_file.endswith('.bz2'):
+        data = bz2.decompress(data)
+    manifest = json.loads(data.decode())
+
     new_manifest = {}
 
     def fsize(f):
