@@ -621,7 +621,7 @@ func (st *State) downloadSymlinkPart(
 
 // Download part of a file and verify its checksum in memory
 //
-func (st *State) downloadRegPartCheckSum(
+func (st *State) DownloadRegPartCheckSum(
 	httpClient *http.Client,
 	p DBPartRegular,
 	u DXDownloadURL,
@@ -664,7 +664,14 @@ func (st *State) downloadRegPartCheckSum(
 		check(err)
 	}
 
-	// verify the checksum
+	// verify the checksum - skip validation if MD5 is empty
+	if p.MD5 == "" {
+		if st.opts.Verbose {
+			log.Printf("No MD5 checksum provided for part %d, skipping validation", p.PartId)
+		}
+		return true, nil
+	}
+	
 	diskSum := hex.EncodeToString(hasher.Sum(nil))
 	if diskSum != p.MD5 {
 		return false, nil
@@ -680,7 +687,7 @@ func (st *State) downloadRegPart(
 	memoryBuf []byte) error {
 
 	for i := 0; i < numRetriesChecksumMismatch; i++ {
-		ok, err := st.downloadRegPartCheckSum(httpClient, p, u, memoryBuf)
+		ok, err := st.DownloadRegPartCheckSum(httpClient, p, u, memoryBuf)
 		if err != nil {
 			return err
 		}
@@ -1032,6 +1039,14 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 		return
 	}
 	diskSum := hex.EncodeToString(hasher.Sum(nil))
+
+	// Skip validation if MD5 is empty
+	if p.MD5 == "" {
+		if st.opts.Verbose {
+			log.Printf("No MD5 checksum provided for %s part %d, skipping validation", p.FileName, p.PartId)
+		}
+		return
+	}
 
 	if diskSum != p.MD5 {
 		st.resetDBPart(p)
