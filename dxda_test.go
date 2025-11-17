@@ -54,7 +54,7 @@ func TestEnvironmentQuery(t *testing.T) {
 	}
 }
 
-func TestDownloadRegPartCheckSum_WithValidMD5(t *testing.T) {
+func TestdownloadRegPartCheckSum_WithValidMD5(t *testing.T) {
 	// Create test data
 	testData := []byte("Hello, World!")
 	expectedMD5 := md5.Sum(testData)
@@ -97,15 +97,15 @@ func TestDownloadRegPartCheckSum_WithValidMD5(t *testing.T) {
 
 	// Create DBPartRegular with valid MD5
 	part := dxda.DBPartRegular{
-		FileId:       "test-file-123",
-		Project:      "test-project",
-		FileName:     testFileName,
-		Folder:       "test_folder",
-		PartId:       1,
-		Offset:       0,
-		Size:         len(testData),
-		MD5:          expectedMD5Str,
-		BytesFetched: 0,
+		FileId:           "test-file-123",
+		Project:          "test-project",
+		FileName:         testFileName,
+		Folder:           "test_folder",
+		PartId:           1,
+		Offset:           0,
+		Size:             len(testData),
+		MD5:              expectedMD5Str,
+		BytesFetched:     0,
 		DownloadDoneTime: 0,
 	}
 
@@ -120,7 +120,7 @@ func TestDownloadRegPartCheckSum_WithValidMD5(t *testing.T) {
 	memoryBuf := make([]byte, 1024)
 
 	// Test successful download with valid MD5
-	success, err := st.DownloadRegPartCheckSum(httpClient, part, dxURL, memoryBuf)
+	success, err := st.downloadRegPartCheckSum(httpClient, part, dxURL, memoryBuf)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestDownloadRegPartCheckSum_WithValidMD5(t *testing.T) {
 	}
 }
 
-func TestDownloadRegPartCheckSum_WithEmptyMD5(t *testing.T) {
+func TestdownloadRegPartCheckSum_WithEmptyMD5(t *testing.T) {
 	// Create test data
 	testData := []byte("Hello, World! This should pass even without MD5.")
 
@@ -162,15 +162,15 @@ func TestDownloadRegPartCheckSum_WithEmptyMD5(t *testing.T) {
 
 	// Create DBPartRegular with empty MD5
 	part := dxda.DBPartRegular{
-		FileId:       "test-file-456",
-		Project:      "test-project",
-		FileName:     testFileName,
-		Folder:       "test_folder_no_md5",
-		PartId:       1,
-		Offset:       0,
-		Size:         len(testData),
-		MD5:          "", // Empty MD5 - should skip validation
-		BytesFetched: 0,
+		FileId:           "test-file-456",
+		Project:          "test-project",
+		FileName:         testFileName,
+		Folder:           "test_folder_no_md5",
+		PartId:           1,
+		Offset:           0,
+		Size:             len(testData),
+		MD5:              "", // Empty MD5 - should skip validation
+		BytesFetched:     0,
 		DownloadDoneTime: 0,
 	}
 
@@ -185,7 +185,7 @@ func TestDownloadRegPartCheckSum_WithEmptyMD5(t *testing.T) {
 	memoryBuf := make([]byte, 1024)
 
 	// Test successful download with empty MD5 (should skip validation)
-	success, err := st.DownloadRegPartCheckSum(httpClient, part, dxURL, memoryBuf)
+	success, err := st.downloadRegPartCheckSum(httpClient, part, dxURL, memoryBuf)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestDownloadRegPartCheckSum_WithEmptyMD5(t *testing.T) {
 	}
 }
 
-func TestDownloadRegPartCheckSum_WithInvalidMD5(t *testing.T) {
+func TestdownloadRegPartCheckSum_WithInvalidMD5(t *testing.T) {
 	// Create test data
 	testData := []byte("Hello, World!")
 	invalidMD5 := "this_is_definitely_not_the_correct_md5"
@@ -228,15 +228,15 @@ func TestDownloadRegPartCheckSum_WithInvalidMD5(t *testing.T) {
 
 	// Create DBPartRegular with invalid MD5
 	part := dxda.DBPartRegular{
-		FileId:       "test-file-789",
-		Project:      "test-project",
-		FileName:     testFileName,
-		Folder:       "test_folder_invalid_md5",
-		PartId:       1,
-		Offset:       0,
-		Size:         len(testData),
-		MD5:          invalidMD5, // Invalid MD5 - should fail validation
-		BytesFetched: 0,
+		FileId:           "test-file-789",
+		Project:          "test-project",
+		FileName:         testFileName,
+		Folder:           "test_folder_invalid_md5",
+		PartId:           1,
+		Offset:           0,
+		Size:             len(testData),
+		MD5:              invalidMD5, // Invalid MD5 - should fail validation
+		BytesFetched:     0,
 		DownloadDoneTime: 0,
 	}
 
@@ -251,7 +251,7 @@ func TestDownloadRegPartCheckSum_WithInvalidMD5(t *testing.T) {
 	memoryBuf := make([]byte, 1024)
 
 	// Test failed download with invalid MD5
-	success, err := st.DownloadRegPartCheckSum(httpClient, part, dxURL, memoryBuf)
+	success, err := st.downloadRegPartCheckSum(httpClient, part, dxURL, memoryBuf)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}

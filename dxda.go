@@ -620,8 +620,7 @@ func (st *State) downloadSymlinkPart(
 }
 
 // Download part of a file and verify its checksum in memory
-//
-func (st *State) DownloadRegPartCheckSum(
+func (st *State) downloadRegPartCheckSum(
 	httpClient *http.Client,
 	p DBPartRegular,
 	u DXDownloadURL,
@@ -671,7 +670,7 @@ func (st *State) DownloadRegPartCheckSum(
 		}
 		return true, nil
 	}
-	
+
 	diskSum := hex.EncodeToString(hasher.Sum(nil))
 	if diskSum != p.MD5 {
 		return false, nil
@@ -687,7 +686,7 @@ func (st *State) downloadRegPart(
 	memoryBuf []byte) error {
 
 	for i := 0; i < numRetriesChecksumMismatch; i++ {
-		ok, err := st.DownloadRegPartCheckSum(httpClient, p, u, memoryBuf)
+		ok, err := st.downloadRegPartCheckSum(httpClient, p, u, memoryBuf)
 		if err != nil {
 			return err
 		}
@@ -735,7 +734,6 @@ func (st *State) createURL(p DBPart, urls map[string]DXDownloadURL, httpClient *
 }
 
 // A thread that adds pre-authenticated urls to each jobs.
-//
 func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInfo, dxEnv *DXEnvironment) {
 	httpClient := NewHttpClient()
 	urls := make(map[string]DXDownloadURL)
