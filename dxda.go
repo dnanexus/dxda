@@ -620,7 +620,6 @@ func (st *State) downloadSymlinkPart(
 }
 
 // Download part of a file and verify its checksum in memory
-//
 func (st *State) downloadRegPartCheckSum(
 	httpClient *http.Client,
 	p DBPartRegular,
@@ -664,7 +663,12 @@ func (st *State) downloadRegPartCheckSum(
 		check(err)
 	}
 
-	// verify the checksum
+	// verify the checksum (skip if MD5 is not provided)
+	if p.MD5 == "" {
+		// No MD5 checksum available for this part, skip verification
+		return true, nil
+	}
+
 	diskSum := hex.EncodeToString(hasher.Sum(nil))
 	if diskSum != p.MD5 {
 		return false, nil
@@ -679,6 +683,22 @@ func (st *State) downloadRegPart(
 	u DXDownloadURL,
 	memoryBuf []byte) error {
 
+	// If no MD5 is available, download without verification
+	if p.MD5 == "" {
+		if st.opts.Verbose {
+			log.Printf("Downloading part %d without MD5 verification (no checksum available)", p.PartId)
+		}
+		ok, err := st.downloadRegPartCheckSum(httpClient, p, u, memoryBuf)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		return fmt.Errorf("failed to download part %d", p.PartId)
+	}
+
+	// MD5 is available, perform verification with retries
 	for i := 0; i < numRetriesChecksumMismatch; i++ {
 		ok, err := st.downloadRegPartCheckSum(httpClient, p, u, memoryBuf)
 		if err != nil {
@@ -728,7 +748,6 @@ func (st *State) createURL(p DBPart, urls map[string]DXDownloadURL, httpClient *
 }
 
 // A thread that adds pre-authenticated urls to each jobs.
-//
 func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInfo, dxEnv *DXEnvironment) {
 	httpClient := NewHttpClient()
 	urls := make(map[string]DXDownloadURL)
@@ -1024,6 +1043,14 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 		return
 	}
 	partReader := io.LimitReader(localf, int64(p.Size))
+
+	// Skip MD5 verification if no checksum is available
+	if p.MD5 == "" {
+		if st.opts.Verbose {
+			log.Printf("Skipping MD5 verification for %s part %d (no checksum available)", p.FileName, p.PartId)
+		}
+		return
+	}
 
 	hasher := md5.New()
 	if _, err := io.Copy(hasher, partReader); err != nil {
