@@ -12,7 +12,7 @@ go build -o $dxda $DXDA_ROOT/cmd/dx-download-agent/dx-download-agent.go
 echo "creating manifest from the dxfuse_test_data:/correctness directory"
 manifest=$CRNT_DIR/regular.manifest.json.bz2
 if [[ ! -f $manifest ]]; then
-    python ${DXDA_ROOT}/scripts/create_manifest.py -r /correctness --outfile $manifest
+    python ${DXDA_ROOT}/scripts/create_manifest.py -r /correctness --output_file $manifest
 fi
 
 # download and check
@@ -47,7 +47,7 @@ fi
 echo "Checking large files"
 manifest2=$CRNT_DIR/large_files.manifest.json.bz2
 if [[ ! -f $manifest2 ]]; then
-    python ${DXDA_ROOT}/scripts/create_manifest.py -r /large_files --outfile $manifest2
+    python ${DXDA_ROOT}/scripts/create_manifest.py -r /large_files --output_file $manifest2
 fi
 
 $dxda download $manifest2
