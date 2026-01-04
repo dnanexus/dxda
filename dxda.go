@@ -67,6 +67,8 @@ type DBPartRegular struct {
 	MD5              string
 	BytesFetched     int
 	DownloadDoneTime int64 // The time when it completed downloading
+	ChecksumType     string
+	Checksum         string
 }
 
 func (reg DBPartRegular) folder() string   { return reg.Folder }
@@ -292,9 +294,9 @@ func (st *State) addRegularFileToTable(txn *sql.Tx, f DXFileRegular) {
 	for _, p := range f.Parts {
 		sqlStmt := fmt.Sprintf(`
 				INSERT INTO manifest_regular_stats
-				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d');
+				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d', '%s', '%s');
 				`,
-			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0)
+			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0, *f.ChecksumType, *p.Checksum)
 		_, err := txn.Exec(sqlStmt)
 		check(err)
 		offset += int64(p.Size)
@@ -355,7 +357,9 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 		size integer,
 		md5 text,
 		bytes_fetched integer,
-                download_done_time integer
+                download_done_time integer,
+		checksum_type text,
+		checksum text
 	);
 	`
 	_, err = st.db.Exec(sqlStmt)
@@ -620,7 +624,6 @@ func (st *State) downloadSymlinkPart(
 }
 
 // Download part of a file and verify its checksum in memory
-//
 func (st *State) downloadRegPartCheckSum(
 	httpClient *http.Client,
 	p DBPartRegular,
@@ -638,6 +641,8 @@ func (st *State) downloadRegPartCheckSum(
 
 	// compute the checksum as we go
 	hasher := md5.New()
+	var chunkData []byte
+	var partData []byte
 
 	// loop through the part, reading in chunk pieces
 	endPart := p.Offset + int64(p.Size) - 1
@@ -661,13 +666,31 @@ func (st *State) downloadRegPartCheckSum(
 
 		// update the checksum
 		_, err = io.Copy(hasher, bytes.NewReader(body))
+		chunkData = body
+		partData = append(partData, chunkData...)
+
 		check(err)
 	}
 
-	// verify the checksum
-	diskSum := hex.EncodeToString(hasher.Sum(nil))
-	if diskSum != p.MD5 {
-		return false, nil
+	// verify the MD5 checksum
+	if p.MD5 != "" {
+		diskSum := hex.EncodeToString(hasher.Sum(nil))
+		if diskSum != p.MD5 {
+			return false, nil
+		}
+	}
+
+	// verify other checksums
+	if p.ChecksumType != "" {
+		var calculatedChecksum string
+		if p.ChecksumType != ChecksumCRC64NVME {
+			calculatedChecksum, err = CalculateChecksum(p.ChecksumType, chunkData)
+		} else {
+			calculatedChecksum, err = CalculateChecksum(p.ChecksumType, partData)
+		}
+		if calculatedChecksum != p.Checksum || err != nil {
+			return false, nil
+		}
 	}
 
 	return true, nil
@@ -687,7 +710,13 @@ func (st *State) downloadRegPart(
 		if ok {
 			return nil
 		}
-		log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", p.PartId)
+		if p.MD5 != "" {
+			log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", p.PartId)
+		}
+
+		if p.ChecksumType != "" {
+			log.Printf("Checkum %s of part Id %d does not match stored checksum. Retrying.", p.ChecksumType, p.PartId)
+		}
 	}
 
 	return fmt.Errorf("MD5 checksum mismatch for part %d url=%s. Gave up after %d attempts",
@@ -728,7 +757,6 @@ func (st *State) createURL(p DBPart, urls map[string]DXDownloadURL, httpClient *
 }
 
 // A thread that adds pre-authenticated urls to each jobs.
-//
 func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInfo, dxEnv *DXEnvironment) {
 	httpClient := NewHttpClient()
 	urls := make(map[string]DXDownloadURL)
@@ -839,7 +867,7 @@ func (st *State) DownloadManifestDB(fname string) {
 	for rows.Next() {
 		var p DBPartRegular
 		err := rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime)
+			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum)
 		check(err)
 		j := JobInfo{
 			part: p,
@@ -1025,20 +1053,53 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 	}
 	partReader := io.LimitReader(localf, int64(p.Size))
 
-	hasher := md5.New()
-	if _, err := io.Copy(hasher, partReader); err != nil {
-		st.resetDBPart(p)
-		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
-		return
-	}
-	diskSum := hex.EncodeToString(hasher.Sum(nil))
-
-	if diskSum != p.MD5 {
-		st.resetDBPart(p)
+	if p.MD5 == "" && p.ChecksumType == "" {
 		msg := fmt.Sprintf(
-			"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
+			"No checksum type nor MD5 available for %s part %d. Cannot verify integrity.",
 			p.FileName, p.PartId)
 		integrityMsgs <- msg
+	}
+
+	if p.MD5 != "" {
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, partReader); err != nil {
+			st.resetDBPart(p)
+			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+			return
+		}
+		diskSum := hex.EncodeToString(hasher.Sum(nil))
+
+		if diskSum != p.MD5 {
+			st.resetDBPart(p)
+			msg := fmt.Sprintf(
+				"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
+				p.FileName, p.PartId)
+			integrityMsgs <- msg
+		}
+	}
+
+	if p.ChecksumType != "" {
+		data, err := io.ReadAll(partReader)
+		if err != nil {
+			st.resetDBPart(p)
+			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+		}
+
+		calculatedChecksum, err := CalculateChecksum(p.ChecksumType, data)
+		if err != nil {
+			msg := fmt.Sprintf("Unsupported checksum type %s for %s part %d",
+				p.ChecksumType, p.FileName, p.PartId)
+			integrityMsgs <- msg
+			return
+		}
+
+		if calculatedChecksum != p.Checksum {
+			st.resetDBPart(p)
+			msg := fmt.Sprintf(
+				"Identified %s checksum mismatch for %s part %d. Please re-issue the download command to resolve.",
+				p.ChecksumType, p.FileName, p.PartId)
+			integrityMsgs <- msg
+		}
 	}
 }
 
@@ -1115,7 +1176,7 @@ func (st *State) checkAllRegularFileIntegrity() bool {
 	for rows.Next() {
 		var p DBPartRegular
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime)
+			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum)
 		check(err)
 		j := JobInfo{
 			part: p,

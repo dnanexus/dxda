@@ -17,8 +17,8 @@ import (
 // External facing types
 
 // Manifest.
-//  1) a map from file-id to a description of a regular file
-//  2) a map from file-id to a description of a symbolic link
+//  1. a map from file-id to a description of a regular file
+//  2. a map from file-id to a description of a symbolic link
 type Manifest struct {
 	Files []DXFile
 }
@@ -33,12 +33,13 @@ type DXFile interface {
 
 // Data file on dnanexus
 type DXFileRegular struct {
-	Folder string
-	Id     string
-	ProjId string
-	Name   string
-	Size   int64
-	Parts  []DXPart
+	Folder       string
+	Id           string
+	ProjId       string
+	Name         string
+	Size         int64
+	ChecksumType *string
+	Parts        []DXPart
 }
 
 func (reg DXFileRegular) id() string     { return reg.Id }
@@ -71,10 +72,11 @@ type ManifestRaw map[string][]ManifestRawFile
 // File description in the manifest. Additional details will be gathered
 // with an API call.
 type ManifestRawFile struct {
-	Folder string             `json:"folder"`
-	Id     string             `json:"id"`
-	Name   string             `json:"name"`
-	Parts  *map[string]DXPart `json:"parts,omitempty"`
+	Folder       string             `json:"folder"`
+	Id           string             `json:"id"`
+	Name         string             `json:"name"`
+	ChecksumType *string            `json:"checksumType,omitempty"`
+	Parts        *map[string]DXPart `json:"parts,omitempty"`
 }
 
 func validateDirName(p string) error {
@@ -120,7 +122,6 @@ func (mRaw ManifestRaw) validate() error {
 
 // Check if the manifest includes only regular files with a list of parts.
 // In this case, we assume they have already been validated.
-//
 func (mRaw ManifestRaw) onlyRegularFilesWithParts() bool {
 	for _, files := range mRaw {
 		for _, f := range files {
@@ -142,9 +143,10 @@ func processFileParts(orgParts map[string]DXPart) []DXPart {
 	var parts []DXPart
 	for partId, p := range orgParts {
 		p2 := DXPart{
-			Id:   safeString2Int(partId),
-			MD5:  p.MD5,
-			Size: p.Size,
+			Id:       safeString2Int(partId),
+			MD5:      p.MD5,
+			Size:     p.Size,
+			Checksum: p.Checksum,
 		}
 		parts = append(parts, p2)
 	}
@@ -175,12 +177,13 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 
 			// regular file
 			dxFile := DXFileRegular{
-				Folder: folder,
-				Id:     f.Id,
-				ProjId: projId,
-				Name:   f.Name,
-				Size:   size,
-				Parts:  parts,
+				Folder:       folder,
+				Id:           f.Id,
+				ProjId:       projId,
+				Name:         f.Name,
+				Size:         size,
+				Parts:        parts,
+				ChecksumType: f.ChecksumType,
 			}
 			manifest.Files = append(manifest.Files, dxFile)
 		}
@@ -190,7 +193,6 @@ func (mRaw ManifestRaw) genTrustedManifest() (*Manifest, error) {
 }
 
 // Fill in missing fields for each file. Split into symlinks, and regular files.
-//
 func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvironment) (*Manifest, error) {
 	tmpHttpClient := &http.Client{}
 
