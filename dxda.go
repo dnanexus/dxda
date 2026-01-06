@@ -296,7 +296,7 @@ func (st *State) addRegularFileToTable(txn *sql.Tx, f DXFileRegular) {
 				INSERT INTO manifest_regular_stats
 				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d', '%s', '%s');
 				`,
-			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0, *f.ChecksumType, *p.Checksum)
+			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0, safeDeref(f.ChecksumType, ""), safeDeref(p.Checksum, ""))
 		_, err := txn.Exec(sqlStmt)
 		check(err)
 		offset += int64(p.Size)
