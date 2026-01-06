@@ -4,10 +4,10 @@ FROM ubuntu:22.04
 ARG TARGETARCH
 
 # Get dependencies for running Go
-ENV GOVERSION="1.20.11"
+ENV GOVERSION="1.22.12"
 RUN apt-get update && apt-get install -y wget git build-essential && \
     wget https://dl.google.com/go/go${GOVERSION}.linux-${TARGETARCH}.tar.gz && \
-    tar -C /usr/local -xzf go${GOVERSION}.linux-${TARGETARCH}.tar.gz && \ 
+    tar -C /usr/local -xzf go${GOVERSION}.linux-${TARGETARCH}.tar.gz && \
     rm go${GOVERSION}.linux-${TARGETARCH}.tar.gz
 
 # Set environment variables for Go

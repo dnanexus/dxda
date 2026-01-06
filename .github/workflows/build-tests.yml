@@ -17,7 +17,7 @@ jobs:
         - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
           with:
-            go-version: '1.20.11'
+            go-version: '1.22.12'
         - name: Build Macos executable
           run: |
             set -x
@@ -35,7 +35,7 @@ jobs:
         - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
           with:
-            go-version: '1.20.11'
+            go-version: '1.22.12'
         - name: Build Windows executable
           run: |
             go build -o dx-download-agent.exe cmd/dx-download-agent/dx-download-agent.go
