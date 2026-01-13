@@ -641,8 +641,6 @@ func (st *State) downloadRegPartCheckSum(
 
 	// compute the checksum as we go
 	hasher := md5.New()
-	var chunkData []byte
-	var partData []byte
 
 	// loop through the part, reading in chunk pieces
 	endPart := p.Offset + int64(p.Size) - 1
@@ -666,8 +664,6 @@ func (st *State) downloadRegPartCheckSum(
 
 		// update the checksum
 		_, err = io.Copy(hasher, bytes.NewReader(body))
-		chunkData = body
-		partData = append(partData, chunkData...)
 
 		check(err)
 	}
@@ -676,19 +672,6 @@ func (st *State) downloadRegPartCheckSum(
 	if p.MD5 != "" {
 		diskSum := hex.EncodeToString(hasher.Sum(nil))
 		if diskSum != p.MD5 {
-			return false, nil
-		}
-	}
-
-	// verify other checksums
-	if p.ChecksumType != "" {
-		var calculatedChecksum string
-		if p.ChecksumType != ChecksumCRC64NVME {
-			calculatedChecksum, err = CalculateChecksum(p.ChecksumType, chunkData)
-		} else {
-			calculatedChecksum, err = CalculateChecksum(p.ChecksumType, partData)
-		}
-		if calculatedChecksum != p.Checksum || err != nil {
 			return false, nil
 		}
 	}
