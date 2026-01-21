@@ -213,6 +213,50 @@ func (st *State) Close() {
 	st.db.Close()
 }
 
+// Returns an error if the schema is outdated and requires recreation.
+func checkSchemaVersion(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(manifest_regular_stats)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	// Check if checksum column exists
+	hasChecksumColumns := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			colType   string
+			notNull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+
+		// both checksum and checksum_type columns were added in the same version
+		if name == "checksum_type" {
+			hasChecksumColumns = true
+			break
+		}
+	}
+
+	if !hasChecksumColumns {
+		return fmt.Errorf("database schema is outdated (missing checksum columns). Please delete the .stats.db file and re-run the download to recreate the manifest database")
+	}
+
+	return nil
+}
+
+// CheckSchemaVersion verifies the database schema is compatible with current version.
+// Returns an error if the schema is outdated and requires recreation.
+func (st *State) CheckSchemaVersion() error {
+	return checkSchemaVersion(st.db)
+}
+
 // Probably a better way to do this :)
 func (st *State) queryDBIntegerResult(query string) int64 {
 	st.mutex.Lock()
