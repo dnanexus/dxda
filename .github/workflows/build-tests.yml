@@ -67,3 +67,4 @@ jobs:
           run: |
             set -x
             ./dx-download-agent download -max_threads=`nproc` test_files/single_file.manifest.json.bz2
+            ./dx-download-agent inspect test_files/single_file.manifest.json.bz2
