@@ -49,7 +49,7 @@ jobs:
       GOARCH: amd64
       CGO_ENABLED: 1
     steps:
-        - uses: actions/checkoutv4.2.2
+        - uses: actions/checkout@v4.2.2
         - uses: actions/setup-go@v5
           with:
             go-version: '1.22.12'
