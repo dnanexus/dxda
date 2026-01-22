@@ -84,6 +84,11 @@ func (p *downloadCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		fmt.Printf("Creating manifest database %s\n", fname+".stats.db")
 		st.CreateManifestDB(*manifest, fname)
 	} else {
+		// Check database schema is compatible with current version
+		if err := st.CheckSchemaVersion(); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("Ensuring files are created for existing manifest \n")
 		st.PrepareFilesForDownload(*manifest)
 	}
@@ -175,6 +180,12 @@ func (p *inspectCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 
 	st := dxda.NewDxDa(dxEnv, fname, opts)
 	defer st.Close()
+
+	// Check database schema is compatible with current version
+	if err := st.CheckSchemaVersion(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	integrityFlag := st.CheckFileIntegrity()
 	if !integrityFlag {

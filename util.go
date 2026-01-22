@@ -182,3 +182,10 @@ func PrintLogAndOut(a string, args ...interface{}) {
 func memorySizeBytes() int64 {
 	return int64(memory.TotalMemory())
 }
+
+func safeDeref(p *string, fallback string) string {
+	if p == nil {
+		return fallback
+	}
+	return *p
+}

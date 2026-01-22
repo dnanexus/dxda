@@ -18,6 +18,15 @@ To get started with `dx-download-agent`, download the the latest pre-compiled bi
         "2": { "size": 5,  "md5": "39239329" }
       }
     },
+    {
+      "id": "file-YYYY",
+      "name": "foo",
+      "folder": "/path/to",
+      "checksumType": "CRC64NVME"
+      "parts": {
+        "1": { "size": 10, "checksum": "12xUBUlUwUM=" },
+      }
+    },
     "..."
   ],
   "project-BBBB": [ "..." ]
@@ -104,6 +113,8 @@ Fields (all fields are strings unless otherwise specified)
 * `size` (integer): size of the part
 * `block_size` (integer): primary block size of file (assumed equal to `size` except for the last part)
 * `bytes_fetched` (integer <= `size`): total number of bytes downloaded
+* `checksum_type` (optional): type of checksum used (e.g. `CRC64NVME`, `CRC32C`, `CRC32`, `SHA256`, `SHA1`)
+* `checksum` (optional): checksum value for the part ID if not using md5
 
 It is up to the implementation to decide whether or not `bytes_fetched` is updated in a more coarse- vs. fine-grained fashion.  For example, `bytes_fetched` can be updated only when the part download is complete. In this case, its values will only be `0` or the value of `size`.
 

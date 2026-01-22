@@ -67,6 +67,8 @@ type DBPartRegular struct {
 	MD5              string
 	BytesFetched     int
 	DownloadDoneTime int64 // The time when it completed downloading
+	ChecksumType     string
+	Checksum         string
 }
 
 func (reg DBPartRegular) folder() string   { return reg.Folder }
@@ -211,6 +213,50 @@ func (st *State) Close() {
 	st.db.Close()
 }
 
+// Returns an error if the schema is outdated and requires recreation.
+func checkSchemaVersion(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(manifest_regular_stats)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	// Check if checksum column exists
+	hasChecksumColumns := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			colType   string
+			notNull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+
+		// both checksum and checksum_type columns were added in the same version
+		if name == "checksum_type" {
+			hasChecksumColumns = true
+			break
+		}
+	}
+
+	if !hasChecksumColumns {
+		return fmt.Errorf("database schema is outdated (missing checksum columns). Please delete the .stats.db file and re-run the download to recreate the manifest database")
+	}
+
+	return nil
+}
+
+// CheckSchemaVersion verifies the database schema is compatible with current version.
+// Returns an error if the schema is outdated and requires recreation.
+func (st *State) CheckSchemaVersion() error {
+	return checkSchemaVersion(st.db)
+}
+
 // Probably a better way to do this :)
 func (st *State) queryDBIntegerResult(query string) int64 {
 	st.mutex.Lock()
@@ -292,9 +338,9 @@ func (st *State) addRegularFileToTable(txn *sql.Tx, f DXFileRegular) {
 	for _, p := range f.Parts {
 		sqlStmt := fmt.Sprintf(`
 				INSERT INTO manifest_regular_stats
-				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d');
+				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d', '%s', '%s');
 				`,
-			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0)
+			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0, safeDeref(f.ChecksumType, ""), safeDeref(p.Checksum, ""))
 		_, err := txn.Exec(sqlStmt)
 		check(err)
 		offset += int64(p.Size)
@@ -355,7 +401,9 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 		size integer,
 		md5 text,
 		bytes_fetched integer,
-                download_done_time integer
+                download_done_time integer,
+		checksum_type text,
+		checksum text
 	);
 	`
 	_, err = st.db.Exec(sqlStmt)
@@ -620,7 +668,6 @@ func (st *State) downloadSymlinkPart(
 }
 
 // Download part of a file and verify its checksum in memory
-//
 func (st *State) downloadRegPartCheckSum(
 	httpClient *http.Client,
 	p DBPartRegular,
@@ -661,13 +708,16 @@ func (st *State) downloadRegPartCheckSum(
 
 		// update the checksum
 		_, err = io.Copy(hasher, bytes.NewReader(body))
+
 		check(err)
 	}
 
-	// verify the checksum
-	diskSum := hex.EncodeToString(hasher.Sum(nil))
-	if diskSum != p.MD5 {
-		return false, nil
+	// verify the MD5 checksum
+	if p.MD5 != "" {
+		diskSum := hex.EncodeToString(hasher.Sum(nil))
+		if diskSum != p.MD5 {
+			return false, nil
+		}
 	}
 
 	return true, nil
@@ -687,7 +737,13 @@ func (st *State) downloadRegPart(
 		if ok {
 			return nil
 		}
-		log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", p.PartId)
+		if p.MD5 != "" {
+			log.Printf("MD5 string of part Id %d does not match stored MD5sum. Retrying.", p.PartId)
+		}
+
+		if p.ChecksumType != "" {
+			log.Printf("Checkum %s of part Id %d does not match stored checksum. Retrying.", p.ChecksumType, p.PartId)
+		}
 	}
 
 	return fmt.Errorf("MD5 checksum mismatch for part %d url=%s. Gave up after %d attempts",
@@ -728,7 +784,6 @@ func (st *State) createURL(p DBPart, urls map[string]DXDownloadURL, httpClient *
 }
 
 // A thread that adds pre-authenticated urls to each jobs.
-//
 func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInfo, dxEnv *DXEnvironment) {
 	httpClient := NewHttpClient()
 	urls := make(map[string]DXDownloadURL)
@@ -839,7 +894,7 @@ func (st *State) DownloadManifestDB(fname string) {
 	for rows.Next() {
 		var p DBPartRegular
 		err := rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime)
+			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum)
 		check(err)
 		j := JobInfo{
 			part: p,
@@ -1025,20 +1080,53 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 	}
 	partReader := io.LimitReader(localf, int64(p.Size))
 
-	hasher := md5.New()
-	if _, err := io.Copy(hasher, partReader); err != nil {
-		st.resetDBPart(p)
-		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
-		return
-	}
-	diskSum := hex.EncodeToString(hasher.Sum(nil))
-
-	if diskSum != p.MD5 {
-		st.resetDBPart(p)
+	if p.MD5 == "" && p.ChecksumType == "" {
 		msg := fmt.Sprintf(
-			"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
+			"No checksum type nor MD5 available for %s part %d. Cannot verify integrity.",
 			p.FileName, p.PartId)
 		integrityMsgs <- msg
+	}
+
+	if p.MD5 != "" {
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, partReader); err != nil {
+			st.resetDBPart(p)
+			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+			return
+		}
+		diskSum := hex.EncodeToString(hasher.Sum(nil))
+
+		if diskSum != p.MD5 {
+			st.resetDBPart(p)
+			msg := fmt.Sprintf(
+				"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
+				p.FileName, p.PartId)
+			integrityMsgs <- msg
+		}
+	}
+
+	if p.ChecksumType != "" {
+		data, err := io.ReadAll(partReader)
+		if err != nil {
+			st.resetDBPart(p)
+			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+		}
+
+		calculatedChecksum, err := CalculateChecksum(p.ChecksumType, data)
+		if err != nil {
+			msg := fmt.Sprintf("Unsupported checksum type %s for %s part %d",
+				p.ChecksumType, p.FileName, p.PartId)
+			integrityMsgs <- msg
+			return
+		}
+
+		if calculatedChecksum != p.Checksum {
+			st.resetDBPart(p)
+			msg := fmt.Sprintf(
+				"Identified %s checksum mismatch for %s part %d. Please re-issue the download command to resolve.",
+				p.ChecksumType, p.FileName, p.PartId)
+			integrityMsgs <- msg
+		}
 	}
 }
 
@@ -1115,7 +1203,7 @@ func (st *State) checkAllRegularFileIntegrity() bool {
 	for rows.Next() {
 		var p DBPartRegular
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime)
+			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum)
 		check(err)
 		j := JobInfo{
 			part: p,

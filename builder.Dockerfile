@@ -1,6 +1,6 @@
 FROM --platform=amd64 ubuntu:20.04
 
-ENV GO_VERSION=1.20.11
+ENV GO_VERSION=1.22.12
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/usr/local/go/bin:${PATH}"

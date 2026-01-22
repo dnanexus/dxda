@@ -33,9 +33,11 @@ def fileID2manifest(fdetails, project):
     pruned['id'] = fdetails['id']
     pruned['name'] = fdetails['name']
     pruned['folder'] = fdetails['folder']
+    if fdetails['checksumType']:
+        pruned['checksumType'] = fdetails['checksumType']
      # Symlinks do not contain parts
     if fdetails['parts']:
-        pruned['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size"} for pid, pdetails in fdetails['parts'].items()}
+        pruned['parts'] = {pid: {k:v for k,v in pdetails.items() if k == "md5" or k == "size" or k == "checksum"} for pid, pdetails in fdetails['parts'].items()}
     return pruned
 
 def main():
@@ -48,7 +50,7 @@ def main():
 
     project, folder, _ = resolve_existing_path(args.folder)
 
-    ids = dxpy.find_data_objects(classname='file', first_page_size=1000, state='closed', describe={'fields': {'id': True, 'name': True, 'folder': True, 'parts': True, 'state': True, 'archivalState': True }}, project=project, folder=folder, recurse=args.recursive)
+    ids = dxpy.find_data_objects(classname='file', first_page_size=1000, state='closed', describe={'fields': {'id': True, 'name': True, 'folder': True, 'parts': True, 'state': True, 'archivalState': True, 'checksumType': True }}, project=project, folder=folder, recurse=args.recursive)
     manifest = { project: [] }
 
     for i,f in enumerate(ids):

@@ -24,6 +24,7 @@ type DxDescribeDataObject struct {
 	Size          int64
 	Parts         map[string]DXPart // a list of parts for a DNAx file
 	Symlink       *DXSymlink
+	ChecksumType  string
 }
 
 // description of part of a file
@@ -32,8 +33,9 @@ type DXPart struct {
 	Id int
 
 	// these fields are in the input JSON
-	MD5  string `json:"md5"`
-	Size int    `json:"size"`
+	MD5      string  `json:"md5"`
+	Size     int     `json:"size"`
+	Checksum *string `json:"checksum,omitempty"`
 }
 
 // a full URL for symbolic links, with a corresponding MD5 checksum for
@@ -78,6 +80,7 @@ type DxDescribeRaw struct {
 	Symlink       *DxSymlinkRaw     `json:"symlinkPath,omitempty"`
 	MD5           *string           `json:"md5,omitempty"`
 	Drive         *string           `json:"drive,omitempty"`
+	ChecksumType  *string           `json:"checksumType,omitempty"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -103,6 +106,7 @@ func submit(
 			"symlinkPath":   true,
 			"drive":         true,
 			"md5":           true,
+			"checksumType":  true,
 		},
 	}
 	var payload []byte
@@ -165,6 +169,7 @@ func submit(
 			ArchivalState: descRaw.ArchivalState,
 			Size:          descRaw.Size,
 			Parts:         descRaw.Parts,
+			ChecksumType:  *descRaw.ChecksumType,
 			Symlink:       symlink,
 		}
 		//fmt.Printf("%v\n", desc)
