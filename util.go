@@ -19,16 +19,14 @@ const (
 	GiB = 1024 * MiB
 )
 const (
-	// Limit on an http request to S3/Azure object storage
-	requestOverallTimout = 6 * time.Minute
+	// Limit on an http request to cloud object storage
+	requestOverallTimeout = 6 * time.Minute
 
-	// An API request to the dnanexus servers should never take more
+	// An API request to the DNAnexus API should not take more
 	// than this amount of time
-	dxApiOverallTimout = 10 * time.Minute
-
+	dxApiOverallTimeout = 10 * time.Minute
 	// Extracted automatically with a shell script, so keep the format:
-	// version = XXXX
-	Version = "v0.6.2"
+	Version = "v0.6.3"
 )
 
 // Configuration options for the download agent

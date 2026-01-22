@@ -327,7 +327,7 @@ func DxHttpRequestData(
 	for ccCnt := 0; ccCnt < contextCanceledNumRetries; ccCnt++ {
 		// Safety procedure to force timeout to prevent hanging
 		ctx2, cancel := context.WithCancel(ctx)
-		timer := time.AfterFunc(requestOverallTimout, func() {
+		timer := time.AfterFunc(requestOverallTimeout, func() {
 			cancel()
 		})
 		defer timer.Stop()
@@ -373,7 +373,7 @@ func DxHttpRequestData(
 		}
 
 		log.Printf("Filepart was not successfully downloaded within %.f minutes (only %d of %d bytes fetched). Retrying (attempt %d of %d).",
-			requestOverallTimout.Minutes(), bytesFetched, dataLen, ccCnt+1, contextCanceledNumRetries)
+			requestOverallTimeout.Minutes(), bytesFetched, dataLen, ccCnt+1, contextCanceledNumRetries)
 		time.Sleep(time.Duration(contextCanceledTimeout) * time.Second)
 	}
 
@@ -406,7 +406,7 @@ func DxAPI(
 
 	// Safety procedure to force timeout to prevent hanging
 	ctx2, cancel := context.WithCancel(ctx)
-	timer := time.AfterFunc(dxApiOverallTimout, func() {
+	timer := time.AfterFunc(dxApiOverallTimeout, func() {
 		cancel()
 	})
 	defer timer.Stop()
