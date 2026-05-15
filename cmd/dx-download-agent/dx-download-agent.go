@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"strings"
 
 	// The dxda package should contain all core functionality
 	"github.com/dnanexus/dxda"
@@ -21,7 +23,13 @@ type downloadCmd struct {
 
 var err error
 
+const rootDescription = "CLI tool to manage the download of files from DNAnexus"
 const downloadUsage = "dx-download-agent download [-num_threads=N] <manifest.json.bz2>"
+const commandsUsage = "dx-download-agent commands"
+const flagsUsage = "dx-download-agent flags [<subcommand>]"
+const helpUsage = "dx-download-agent help [<subcommand>]"
+const inspectSynopsis = "Inspect files downloaded in a manifest and validate their integrity"
+const versionUsage = "dx-download-agent version"
 
 func (*downloadCmd) Name() string     { return "download" }
 func (*downloadCmd) Synopsis() string { return "Download files in a manifest" }
@@ -108,7 +116,7 @@ type progressCmd struct {
 }
 
 func (*progressCmd) Name() string     { return "progress" }
-func (*progressCmd) Synopsis() string { return "show current download progress" }
+func (*progressCmd) Synopsis() string { return "Show current download progress" }
 
 const progressUsage = "dx-download-agent progress <manifest.json.bz2>"
 
@@ -150,13 +158,13 @@ const inspectUsage = "dx-download-agent inspect [-num_threads=N] <manifest.json.
 
 func (*inspectCmd) Name() string { return "inspect" }
 func (*inspectCmd) Synopsis() string {
-	return "Inspect files downloaded in a manifest + additional 'health' checks"
+	return inspectSynopsis
 }
 func (*inspectCmd) Usage() string {
-	return downloadUsage
+	return inspectUsage
 }
 func (p *inspectCmd) SetFlags(f *flag.FlagSet) {
-	f.IntVar(&p.numThreads, "num_threads", 0, "Number of threads to use when downloading files. By default (or if zero), this number is chosen according to machine memory and CPU constraints.")
+	f.IntVar(&p.numThreads, "num_threads", 0, "Number of threads to use when validating files. By default (or if zero), this number is chosen according to machine memory and CPU constraints.")
 	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
@@ -199,19 +207,183 @@ type versionCmd struct {
 }
 
 func (*versionCmd) Name() string               { return "version" }
-func (*versionCmd) Synopsis() string           { return "get the version" }
-func (*versionCmd) Usage() string              { return "get the dx-download-agent version" }
+func (*versionCmd) Synopsis() string           { return "Get the version" }
+func (*versionCmd) Usage() string              { return versionUsage }
 func (p *versionCmd) SetFlags(f *flag.FlagSet) {}
 func (p *versionCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	fmt.Println(dxda.Version)
 	return subcommands.ExitSuccess
 }
 
+type commandsCmd struct{}
+
+func (*commandsCmd) Name() string           { return "commands" }
+func (*commandsCmd) Synopsis() string       { return "List all command names" }
+func (*commandsCmd) Usage() string          { return commandsUsage }
+func (*commandsCmd) SetFlags(*flag.FlagSet) {}
+func (*commandsCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if f.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, commandsUsage)
+		return subcommands.ExitUsageError
+	}
+	visitRegisteredCommands(func(cmd subcommands.Command) {
+		fmt.Fprintln(os.Stdout, cmd.Name())
+	})
+	return subcommands.ExitSuccess
+}
+
+type flagsCmd struct{}
+
+func (*flagsCmd) Name() string           { return "flags" }
+func (*flagsCmd) Synopsis() string       { return "Describe all known top-level flags" }
+func (*flagsCmd) Usage() string          { return flagsUsage }
+func (*flagsCmd) SetFlags(*flag.FlagSet) {}
+func (*flagsCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if f.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, flagsUsage)
+		return subcommands.ExitUsageError
+	}
+
+	if f.NArg() == 0 {
+		printFlags(os.Stdout, flag.CommandLine)
+		return subcommands.ExitSuccess
+	}
+
+	cmd := findRegisteredCommand(f.Arg(0))
+	if cmd == nil {
+		fmt.Fprintf(os.Stderr, "Subcommand %s not understood\n", f.Arg(0))
+		return subcommands.ExitFailure
+	}
+
+	subflags := flag.NewFlagSet(cmd.Name(), flag.PanicOnError)
+	cmd.SetFlags(subflags)
+	printFlags(os.Stdout, subflags)
+	return subcommands.ExitSuccess
+}
+
+type helpCmd struct{}
+
+func (*helpCmd) Name() string           { return "help" }
+func (*helpCmd) Synopsis() string       { return "Describe subcommands and their syntax" }
+func (*helpCmd) Usage() string          { return helpUsage }
+func (*helpCmd) SetFlags(*flag.FlagSet) {}
+func (*helpCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	switch f.NArg() {
+	case 0:
+		explainTopLevel(os.Stdout)
+		return subcommands.ExitSuccess
+	case 1:
+		cmd := findRegisteredCommand(f.Arg(0))
+		if cmd != nil {
+			explainCommand(os.Stdout, cmd)
+			return subcommands.ExitSuccess
+		}
+		fmt.Fprintf(os.Stderr, "Subcommand %s not understood\n", f.Arg(0))
+	default:
+	}
+
+	fmt.Fprintln(os.Stderr, helpUsage)
+	return subcommands.ExitUsageError
+}
+
+func printCommandSummary(w io.Writer, cmd subcommands.Command) {
+	fmt.Fprintf(w, "  %-15s %s\n", cmd.Name(), cmd.Synopsis())
+}
+
+func visitRegisteredCommands(fn func(subcommands.Command)) {
+	subcommands.DefaultCommander.VisitCommands(func(_ *subcommands.CommandGroup, cmd subcommands.Command) {
+		fn(cmd)
+	})
+}
+
+func findRegisteredCommand(name string) subcommands.Command {
+	var found subcommands.Command
+	visitRegisteredCommands(func(cmd subcommands.Command) {
+		if found == nil && cmd.Name() == name {
+			found = cmd
+		}
+	})
+	return found
+}
+
+func printFlags(w io.Writer, fs *flag.FlagSet) {
+	fs.VisitAll(func(f *flag.Flag) {
+		name, usage := flag.UnquoteUsage(f)
+		line := fmt.Sprintf("  -%s", f.Name)
+		if name != "" {
+			line += " " + name
+		}
+		fmt.Fprintln(w, line)
+
+		trimmedUsage := strings.TrimSpace(usage)
+		if trimmedUsage == "" {
+			return
+		}
+
+		for _, usageLine := range strings.Split(trimmedUsage, "\n") {
+			fmt.Fprintf(w, "      %s\n", strings.TrimSpace(usageLine))
+		}
+	})
+}
+
+func explainTopLevel(w io.Writer) {
+	fmt.Fprintf(w, "dx-download-agent %s\n", dxda.Version)
+	fmt.Fprintf(w, "%s\n\n", rootDescription)
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintf(w, "  %s\n", downloadUsage)
+	fmt.Fprintf(w, "  %s\n", inspectUsage)
+	fmt.Fprintf(w, "  %s\n", progressUsage)
+	fmt.Fprintf(w, "  %s\n\n", versionUsage)
+	fmt.Fprintln(w, "Authentication:")
+	fmt.Fprintln(w, "  Set DX_API_TOKEN or configure ~/.dnanexus_config/environment.json.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Primary commands:")
+	printCommandSummary(w, &downloadCmd{})
+	printCommandSummary(w, &inspectCmd{})
+	printCommandSummary(w, &progressCmd{})
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Reference commands:")
+	printCommandSummary(w, &versionCmd{})
+	printCommandSummary(w, &helpCmd{})
+	printCommandSummary(w, &flagsCmd{})
+	printCommandSummary(w, &commandsCmd{})
+	fmt.Fprintln(w)
+}
+
+func explainCommand(w io.Writer, cmd subcommands.Command) {
+	usage := strings.TrimSpace(cmd.Usage())
+	if usage != "" {
+		fmt.Fprintln(w, usage)
+	}
+
+	synopsis := strings.TrimSpace(cmd.Synopsis())
+	if synopsis != "" {
+		fmt.Fprintf(w, "\n%s\n", synopsis)
+	}
+
+	subflags := flag.NewFlagSet(cmd.Name(), flag.PanicOnError)
+	cmd.SetFlags(subflags)
+
+	var hasFlags bool
+	subflags.VisitAll(func(*flag.Flag) {
+		hasFlags = true
+	})
+	if !hasFlags {
+		return
+	}
+
+	fmt.Fprintln(w)
+	printFlags(w, subflags)
+}
+
 // The CLI is simply a wrapper around the dxda package
 func main() {
-	subcommands.Register(subcommands.HelpCommand(), "")
-	subcommands.Register(subcommands.FlagsCommand(), "")
-	subcommands.Register(subcommands.CommandsCommand(), "")
+	subcommands.DefaultCommander.Explain = explainTopLevel
+	subcommands.DefaultCommander.ExplainCommand = explainCommand
+
+	subcommands.Register(&helpCmd{}, "")
+	subcommands.Register(&flagsCmd{}, "")
+	subcommands.Register(&commandsCmd{}, "")
 	subcommands.Register(&downloadCmd{}, "")
 	subcommands.Register(&progressCmd{}, "")
 	subcommands.Register(&inspectCmd{}, "")
@@ -219,7 +391,7 @@ func main() {
 
 	// TODO: modify this to use individual subcommand help
 	if len(os.Args) == 1 {
-		fmt.Printf("Usage:\n  For progress:\n  $ %s\n\n  For downloading:\n  $ %s\n", progressUsage, downloadUsage)
+		explainTopLevel(os.Stderr)
 		os.Exit(1)
 	}
 
