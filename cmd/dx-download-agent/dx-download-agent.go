@@ -25,7 +25,6 @@ var err error
 
 const rootDescription = "CLI tool to manage the download of files from DNAnexus"
 const downloadUsage = "dx-download-agent download [-num_threads=N] <manifest.json.bz2>"
-const flagsUsage = "dx-download-agent flags [<subcommand>]"
 const inspectSynopsis = "Inspect files downloaded in a manifest and validate their integrity"
 const versionUsage = "dx-download-agent version"
 
@@ -213,53 +212,8 @@ func (p *versionCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	return subcommands.ExitSuccess
 }
 
-type flagsCmd struct{}
-
-func (*flagsCmd) Name() string           { return "flags" }
-func (*flagsCmd) Synopsis() string       { return "Describe all known top-level flags" }
-func (*flagsCmd) Usage() string          { return flagsUsage }
-func (*flagsCmd) SetFlags(*flag.FlagSet) {}
-func (*flagsCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	if f.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, flagsUsage)
-		return subcommands.ExitUsageError
-	}
-
-	if f.NArg() == 0 {
-		printFlags(os.Stdout, flag.CommandLine)
-		return subcommands.ExitSuccess
-	}
-
-	cmd := findRegisteredCommand(f.Arg(0))
-	if cmd == nil {
-		fmt.Fprintf(os.Stderr, "Subcommand %s not understood\n", f.Arg(0))
-		return subcommands.ExitFailure
-	}
-
-	subflags := flag.NewFlagSet(cmd.Name(), flag.PanicOnError)
-	cmd.SetFlags(subflags)
-	printFlags(os.Stdout, subflags)
-	return subcommands.ExitSuccess
-}
-
 func printCommandSummary(w io.Writer, cmd subcommands.Command) {
 	fmt.Fprintf(w, "  %-15s %s\n", cmd.Name(), cmd.Synopsis())
-}
-
-func visitRegisteredCommands(fn func(subcommands.Command)) {
-	subcommands.DefaultCommander.VisitCommands(func(_ *subcommands.CommandGroup, cmd subcommands.Command) {
-		fn(cmd)
-	})
-}
-
-func findRegisteredCommand(name string) subcommands.Command {
-	var found subcommands.Command
-	visitRegisteredCommands(func(cmd subcommands.Command) {
-		if found == nil && cmd.Name() == name {
-			found = cmd
-		}
-	})
-	return found
 }
 
 func printFlags(w io.Writer, fs *flag.FlagSet) {
@@ -301,7 +255,7 @@ func explainTopLevel(w io.Writer) {
 	fmt.Fprintln(w, "Reference commands:")
 	printCommandSummary(w, &versionCmd{})
 	printCommandSummary(w, subcommands.HelpCommand())
-	printCommandSummary(w, &flagsCmd{})
+	printCommandSummary(w, subcommands.FlagsCommand())
 	printCommandSummary(w, subcommands.CommandsCommand())
 	fmt.Fprintln(w)
 }
@@ -338,7 +292,7 @@ func main() {
 	subcommands.DefaultCommander.ExplainCommand = explainCommand
 
 	subcommands.Register(subcommands.HelpCommand(), "")
-	subcommands.Register(&flagsCmd{}, "")
+	subcommands.Register(subcommands.FlagsCommand(), "")
 	subcommands.Register(subcommands.CommandsCommand(), "")
 	subcommands.Register(&downloadCmd{}, "")
 	subcommands.Register(&progressCmd{}, "")
