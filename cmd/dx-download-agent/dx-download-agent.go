@@ -23,7 +23,7 @@ type downloadCmd struct {
 
 var err error
 
-const rootDescription = "CLI tool to manage the download of files from DNAnexus"
+const rootDescription = "CLI tool to manage the download of files from the DNAnexus Platform"
 const downloadUsage = "dx-download-agent download [-num_threads=N] <manifest.json.bz2>"
 const inspectSynopsis = "Inspect files downloaded in a manifest and validate their integrity"
 const versionUsage = "dx-download-agent version"
