@@ -25,9 +25,7 @@ var err error
 
 const rootDescription = "CLI tool to manage the download of files from DNAnexus"
 const downloadUsage = "dx-download-agent download [-num_threads=N] <manifest.json.bz2>"
-const commandsUsage = "dx-download-agent commands"
 const flagsUsage = "dx-download-agent flags [<subcommand>]"
-const helpUsage = "dx-download-agent help [<subcommand>]"
 const inspectSynopsis = "Inspect files downloaded in a manifest and validate their integrity"
 const versionUsage = "dx-download-agent version"
 
@@ -215,23 +213,6 @@ func (p *versionCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{
 	return subcommands.ExitSuccess
 }
 
-type commandsCmd struct{}
-
-func (*commandsCmd) Name() string           { return "commands" }
-func (*commandsCmd) Synopsis() string       { return "List all command names" }
-func (*commandsCmd) Usage() string          { return commandsUsage }
-func (*commandsCmd) SetFlags(*flag.FlagSet) {}
-func (*commandsCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	if f.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, commandsUsage)
-		return subcommands.ExitUsageError
-	}
-	visitRegisteredCommands(func(cmd subcommands.Command) {
-		fmt.Fprintln(os.Stdout, cmd.Name())
-	})
-	return subcommands.ExitSuccess
-}
-
 type flagsCmd struct{}
 
 func (*flagsCmd) Name() string           { return "flags" }
@@ -259,31 +240,6 @@ func (*flagsCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) s
 	cmd.SetFlags(subflags)
 	printFlags(os.Stdout, subflags)
 	return subcommands.ExitSuccess
-}
-
-type helpCmd struct{}
-
-func (*helpCmd) Name() string           { return "help" }
-func (*helpCmd) Synopsis() string       { return "Describe subcommands and their syntax" }
-func (*helpCmd) Usage() string          { return helpUsage }
-func (*helpCmd) SetFlags(*flag.FlagSet) {}
-func (*helpCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	switch f.NArg() {
-	case 0:
-		explainTopLevel(os.Stdout)
-		return subcommands.ExitSuccess
-	case 1:
-		cmd := findRegisteredCommand(f.Arg(0))
-		if cmd != nil {
-			explainCommand(os.Stdout, cmd)
-			return subcommands.ExitSuccess
-		}
-		fmt.Fprintf(os.Stderr, "Subcommand %s not understood\n", f.Arg(0))
-	default:
-	}
-
-	fmt.Fprintln(os.Stderr, helpUsage)
-	return subcommands.ExitUsageError
 }
 
 func printCommandSummary(w io.Writer, cmd subcommands.Command) {
@@ -344,9 +300,9 @@ func explainTopLevel(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Reference commands:")
 	printCommandSummary(w, &versionCmd{})
-	printCommandSummary(w, &helpCmd{})
+	printCommandSummary(w, subcommands.HelpCommand())
 	printCommandSummary(w, &flagsCmd{})
-	printCommandSummary(w, &commandsCmd{})
+	printCommandSummary(w, subcommands.CommandsCommand())
 	fmt.Fprintln(w)
 }
 
@@ -381,9 +337,9 @@ func main() {
 	subcommands.DefaultCommander.Explain = explainTopLevel
 	subcommands.DefaultCommander.ExplainCommand = explainCommand
 
-	subcommands.Register(&helpCmd{}, "")
+	subcommands.Register(subcommands.HelpCommand(), "")
 	subcommands.Register(&flagsCmd{}, "")
-	subcommands.Register(&commandsCmd{}, "")
+	subcommands.Register(subcommands.CommandsCommand(), "")
 	subcommands.Register(&downloadCmd{}, "")
 	subcommands.Register(&progressCmd{}, "")
 	subcommands.Register(&inspectCmd{}, "")
