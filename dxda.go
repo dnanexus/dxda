@@ -321,6 +321,7 @@ func (st *State) CheckDiskSpace() error {
 	}
 
 	if availableBytes < totalSizeBytes {
+		// TITAN-132 Do not change this error message
 		desc := fmt.Sprintf("Not enough disk space, available = %s, required = %s",
 			diskSpaceString(availableBytes),
 			diskSpaceString(totalSizeBytes))
