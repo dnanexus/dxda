@@ -14,7 +14,7 @@ jobs:
       GOARCH: amd64
       CGO_ENABLED: 1
     steps:
-        - uses: actions/checkout@v4.2.2
+        - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         - uses: actions/setup-go@v5
           with:
             go-version: '1.22.12'
@@ -32,7 +32,7 @@ jobs:
       GOARCH: amd64
       CGO_ENABLED: 1
     steps:
-        - uses: actions/checkout@v4.2.2
+        - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         - uses: actions/setup-go@v5
           with:
             go-version: '1.22.12'
@@ -44,7 +44,7 @@ jobs:
     name: Linux build and test
     runs-on: ubuntu-latest
     steps:
-        - uses: actions/checkout@v4.2.2
+        - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         - name: Build builder Docker image
           uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75
           with:
