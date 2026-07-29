@@ -3,6 +3,7 @@ package dxda
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 )
 
@@ -143,9 +144,11 @@ func TestMakeValidatedManifestPropagatesChecksumType(t *testing.T) {
 	if reg.Parts[0].Checksum == nil || *reg.Parts[0].Checksum != "ImIEBA==" {
 		t.Errorf("Expected the part checksum to be carried over, got %v", reg.Parts[0].Checksum)
 	}
-	// the folder comes from the manifest, and is cleaned up
-	if reg.Folder != "/sub" {
-		t.Errorf("Expected folder /sub, got %s", reg.Folder)
+	// the folder comes from the manifest, not from the describe reply. It is
+	// normalised for the local filesystem, so the separator is platform
+	// dependent.
+	if want := filepath.Clean("/sub"); reg.Folder != want {
+		t.Errorf("Expected folder %s, got %s", want, reg.Folder)
 	}
 }
 
@@ -161,7 +164,10 @@ func TestMakeValidatedManifestWithoutChecksumType(t *testing.T) {
 		"parts": {"1": {"size": 10, "md5": "9e107d9d372bb6826bd81d3542a419d6"}}
 	}`))
 
-	mRaw := parseRawManifest(t, `{"project-0001": [{"id": "file-0001", "name": "a.txt", "folder": "//sub//"}]}`)
+	// a single leading slash, so that normalisation is unambiguous on Windows
+	// too: a doubled leading slash is a UNC root there, not a spurious slash
+	const rawFolder = "/sub//nested"
+	mRaw := parseRawManifest(t, `{"project-0001": [{"id": "file-0001", "name": "a.txt", "folder": "`+rawFolder+`"}]}`)
 	manifest, err := mRaw.makeValidatedManifest(context.Background(), dxEnv)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
@@ -172,8 +178,11 @@ func TestMakeValidatedManifestWithoutChecksumType(t *testing.T) {
 		t.Errorf("Expected nil ChecksumType, got %q", *reg.ChecksumType)
 	}
 	// spurious slashes are cleaned up
-	if reg.Folder != "/sub" {
-		t.Errorf("Expected folder /sub, got %s", reg.Folder)
+	if reg.Folder == rawFolder {
+		t.Errorf("Expected the folder to be normalised, got the raw %s", reg.Folder)
+	}
+	if want := filepath.Clean(rawFolder); reg.Folder != want {
+		t.Errorf("Expected folder %s, got %s", want, reg.Folder)
 	}
 }
 
