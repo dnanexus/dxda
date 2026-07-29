@@ -24,7 +24,9 @@ type DxDescribeDataObject struct {
 	Size          int64
 	Parts         map[string]DXPart // a list of parts for a DNAx file
 	Symlink       *DXSymlink
-	ChecksumType  string
+	// nil when the platform did not report a checksum type for this object,
+	// for example for symlinks or for files predating checksum support
+	ChecksumType *string
 }
 
 // description of part of a file
@@ -169,7 +171,7 @@ func submit(
 			ArchivalState: descRaw.ArchivalState,
 			Size:          descRaw.Size,
 			Parts:         descRaw.Parts,
-			ChecksumType:  *descRaw.ChecksumType,
+			ChecksumType:  descRaw.ChecksumType,
 			Symlink:       symlink,
 		}
 		//fmt.Printf("%v\n", desc)

@@ -1,6 +1,43 @@
 package dxda
 
-import "testing"
+import (
+	"bytes"
+	"io"
+	"testing"
+)
+
+// The streaming hasher must agree with the one-shot calculation, including for
+// input fed in several writes.
+func TestStreamingHasherMatchesCalculateChecksum(t *testing.T) {
+	data := []byte("The quick brown fox jumps over the lazy dog")
+
+	for _, checksumType := range []string{
+		ChecksumCRC64NVME, ChecksumCRC32C, ChecksumCRC32, ChecksumSHA256, ChecksumSHA1,
+	} {
+		expected, err := CalculateChecksum(checksumType, data)
+		if err != nil {
+			t.Fatalf("%s: expected no error, got %v", checksumType, err)
+		}
+
+		hasher, err := NewChecksumHasher(checksumType)
+		if err != nil {
+			t.Fatalf("%s: expected no error, got %v", checksumType, err)
+		}
+		// copy in small chunks, the way a part is read off disk
+		if _, err := io.CopyBuffer(hasher, bytes.NewReader(data), make([]byte, 7)); err != nil {
+			t.Fatalf("%s: expected no error, got %v", checksumType, err)
+		}
+		if got := hasher.Checksum(); got != expected {
+			t.Errorf("%s: streamed checksum %s, expected %s", checksumType, got, expected)
+		}
+	}
+}
+
+func TestNewChecksumHasherUnsupported(t *testing.T) {
+	if _, err := NewChecksumHasher("MD5"); err == nil {
+		t.Fatalf("Expected error for unsupported checksum type, got nil")
+	}
+}
 
 func TestCRC64NVME(t *testing.T) {
 	data := []byte("The quick brown fox jumps over the lazy dog")

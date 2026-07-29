@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net/http"
@@ -1057,7 +1058,7 @@ func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 // -----------------------------------------
 // inspect: validation of downloaded parts
 
-// check that a database part has the correct md5 checksum
+// check that a database part matches the checksums recorded for it
 func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
@@ -1067,6 +1068,43 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 			fname)
 		integrityMsgs <- msg
 		return
+	}
+
+	// A checksum type is only usable if we also have a value to compare against.
+	if p.ChecksumType != "" && p.Checksum == "" {
+		log.Printf("Checksum type %s reported for %s part %d, but no checksum value is stored.",
+			p.ChecksumType, p.FileName, p.PartId)
+	}
+	hasChecksum := p.ChecksumType != "" && p.Checksum != ""
+
+	if p.MD5 == "" && !hasChecksum {
+		// There is nothing to compare the data against. That is not an integrity
+		// error, so it goes to the log rather than to the integrity messages,
+		// which are counted as failures by the caller.
+		log.Printf("No checksum type nor MD5 available for %s part %d. Skipping integrity check.",
+			p.FileName, p.PartId)
+		return
+	}
+
+	// Set up every hasher we can check, so that the part is read from disk once
+	// and never held in memory.
+	var writers []io.Writer
+	var md5Hasher hash.Hash
+	var checksumHasher *ChecksumHasher
+
+	if p.MD5 != "" {
+		md5Hasher = md5.New()
+		writers = append(writers, md5Hasher)
+	}
+	if hasChecksum {
+		var err error
+		checksumHasher, err = NewChecksumHasher(p.ChecksumType)
+		if err != nil {
+			integrityMsgs <- fmt.Sprintf("Unsupported checksum type %s for %s part %d",
+				p.ChecksumType, p.FileName, p.PartId)
+			return
+		}
+		writers = append(writers, checksumHasher)
 	}
 
 	localf, err := os.Open(fname)
@@ -1081,52 +1119,29 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 	}
 	partReader := io.LimitReader(localf, int64(p.Size))
 
-	if p.MD5 == "" && p.ChecksumType == "" {
-		msg := fmt.Sprintf(
-			"No checksum type nor MD5 available for %s part %d. Cannot verify integrity.",
-			p.FileName, p.PartId)
-		integrityMsgs <- msg
+	if _, err := io.Copy(io.MultiWriter(writers...), partReader); err != nil {
+		st.resetDBPart(p)
+		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+		return
 	}
 
-	if p.MD5 != "" {
-		hasher := md5.New()
-		if _, err := io.Copy(hasher, partReader); err != nil {
+	if md5Hasher != nil {
+		if diskSum := hex.EncodeToString(md5Hasher.Sum(nil)); diskSum != p.MD5 {
 			st.resetDBPart(p)
-			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
-			return
-		}
-		diskSum := hex.EncodeToString(hasher.Sum(nil))
-
-		if diskSum != p.MD5 {
-			st.resetDBPart(p)
-			msg := fmt.Sprintf(
+			integrityMsgs <- fmt.Sprintf(
 				"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
 				p.FileName, p.PartId)
-			integrityMsgs <- msg
+			return
 		}
 	}
 
-	if p.ChecksumType != "" {
-		data, err := io.ReadAll(partReader)
-		if err != nil {
+	if checksumHasher != nil {
+		if diskSum := checksumHasher.Checksum(); diskSum != p.Checksum {
 			st.resetDBPart(p)
-			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
-		}
-
-		calculatedChecksum, err := CalculateChecksum(p.ChecksumType, data)
-		if err != nil {
-			msg := fmt.Sprintf("Unsupported checksum type %s for %s part %d",
-				p.ChecksumType, p.FileName, p.PartId)
-			integrityMsgs <- msg
-			return
-		}
-
-		if calculatedChecksum != p.Checksum {
-			st.resetDBPart(p)
-			msg := fmt.Sprintf(
+			integrityMsgs <- fmt.Sprintf(
 				"Identified %s checksum mismatch for %s part %d. Please re-issue the download command to resolve.",
 				p.ChecksumType, p.FileName, p.PartId)
-			integrityMsgs <- msg
+			return
 		}
 	}
 }
