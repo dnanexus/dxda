@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"log"
 	"net/http"
@@ -1086,27 +1085,6 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 		return
 	}
 
-	// Set up every hasher we can check, so that the part is read from disk once
-	// and never held in memory.
-	var writers []io.Writer
-	var md5Hasher hash.Hash
-	var checksumHasher *ChecksumHasher
-
-	if p.MD5 != "" {
-		md5Hasher = md5.New()
-		writers = append(writers, md5Hasher)
-	}
-	if hasChecksum {
-		var err error
-		checksumHasher, err = NewChecksumHasher(p.ChecksumType)
-		if err != nil {
-			integrityMsgs <- fmt.Sprintf("Unsupported checksum type %s for %s part %d",
-				p.ChecksumType, p.FileName, p.PartId)
-			return
-		}
-		writers = append(writers, checksumHasher)
-	}
-
 	localf, err := os.Open(fname)
 	check(err)
 	defer localf.Close()
@@ -1119,29 +1097,41 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 	}
 	partReader := io.LimitReader(localf, int64(p.Size))
 
-	if _, err := io.Copy(io.MultiWriter(writers...), partReader); err != nil {
-		st.resetDBPart(p)
-		integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
-		return
-	}
+	// A part carries either an md5, or a checksum with a file-level checksum
+	// type, never both. The branches are exclusive because partReader can only
+	// be consumed once.
+	if p.MD5 != "" {
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, partReader); err != nil {
+			st.resetDBPart(p)
+			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+			return
+		}
 
-	if md5Hasher != nil {
-		if diskSum := hex.EncodeToString(md5Hasher.Sum(nil)); diskSum != p.MD5 {
+		if diskSum := hex.EncodeToString(hasher.Sum(nil)); diskSum != p.MD5 {
 			st.resetDBPart(p)
 			integrityMsgs <- fmt.Sprintf(
 				"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
 				p.FileName, p.PartId)
+		}
+	} else if hasChecksum {
+		hasher, err := NewChecksumHasher(p.ChecksumType)
+		if err != nil {
+			integrityMsgs <- fmt.Sprintf("Unsupported checksum type %s for %s part %d",
+				p.ChecksumType, p.FileName, p.PartId)
 			return
 		}
-	}
+		if _, err := io.Copy(hasher, partReader); err != nil {
+			st.resetDBPart(p)
+			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
+			return
+		}
 
-	if checksumHasher != nil {
-		if diskSum := checksumHasher.Checksum(); diskSum != p.Checksum {
+		if diskSum := hasher.Checksum(); diskSum != p.Checksum {
 			st.resetDBPart(p)
 			integrityMsgs <- fmt.Sprintf(
 				"Identified %s checksum mismatch for %s part %d. Please re-issue the download command to resolve.",
 				p.ChecksumType, p.FileName, p.PartId)
-			return
 		}
 	}
 }
