@@ -1057,7 +1057,7 @@ func (st *State) resetSymlinkFile(slnk DXFileSymlink) {
 // -----------------------------------------
 // inspect: validation of downloaded parts
 
-// check that a database part has the correct md5 checksum
+// check that a database part matches the checksums recorded for it
 func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) {
 	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
 	if _, err := os.Stat(fname); os.IsNotExist(err) {
@@ -1066,6 +1066,22 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 			"File %s does not exist. Please re-issue the download command to resolve.",
 			fname)
 		integrityMsgs <- msg
+		return
+	}
+
+	// A checksum type is only usable if we also have a value to compare against.
+	if p.ChecksumType != "" && p.Checksum == "" {
+		log.Printf("Checksum type %s reported for %s part %d, but no checksum value is stored.",
+			p.ChecksumType, p.FileName, p.PartId)
+	}
+	hasChecksum := p.ChecksumType != "" && p.Checksum != ""
+
+	if p.MD5 == "" && !hasChecksum {
+		// There is nothing to compare the data against. That is not an integrity
+		// error, so it goes to the log rather than to the integrity messages,
+		// which are counted as failures by the caller.
+		log.Printf("No checksum type nor MD5 available for %s part %d. Skipping integrity check.",
+			p.FileName, p.PartId)
 		return
 	}
 
@@ -1081,13 +1097,9 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 	}
 	partReader := io.LimitReader(localf, int64(p.Size))
 
-	if p.MD5 == "" && p.ChecksumType == "" {
-		msg := fmt.Sprintf(
-			"No checksum type nor MD5 available for %s part %d. Cannot verify integrity.",
-			p.FileName, p.PartId)
-		integrityMsgs <- msg
-	}
-
+	// A part carries either an md5, or a checksum with a file-level checksum
+	// type, never both. The branches are exclusive because partReader can only
+	// be consumed once.
 	if p.MD5 != "" {
 		hasher := md5.New()
 		if _, err := io.Copy(hasher, partReader); err != nil {
@@ -1095,38 +1107,31 @@ func (st *State) checkDBPartRegular(p DBPartRegular, integrityMsgs chan string) 
 			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
 			return
 		}
-		diskSum := hex.EncodeToString(hasher.Sum(nil))
 
-		if diskSum != p.MD5 {
+		if diskSum := hex.EncodeToString(hasher.Sum(nil)); diskSum != p.MD5 {
 			st.resetDBPart(p)
-			msg := fmt.Sprintf(
+			integrityMsgs <- fmt.Sprintf(
 				"Identified md5sum mismatch for %s part %d. Please re-issue the download command to resolve.",
 				p.FileName, p.PartId)
-			integrityMsgs <- msg
 		}
-	}
-
-	if p.ChecksumType != "" {
-		data, err := io.ReadAll(partReader)
+	} else if hasChecksum {
+		hasher, err := NewChecksumHasher(p.ChecksumType)
 		if err != nil {
+			integrityMsgs <- fmt.Sprintf("Unsupported checksum type %s for %s part %d",
+				p.ChecksumType, p.FileName, p.PartId)
+			return
+		}
+		if _, err := io.Copy(hasher, partReader); err != nil {
 			st.resetDBPart(p)
 			integrityMsgs <- fmt.Sprintf("Error reading %s %s", fname, err.Error())
-		}
-
-		calculatedChecksum, err := CalculateChecksum(p.ChecksumType, data)
-		if err != nil {
-			msg := fmt.Sprintf("Unsupported checksum type %s for %s part %d",
-				p.ChecksumType, p.FileName, p.PartId)
-			integrityMsgs <- msg
 			return
 		}
 
-		if calculatedChecksum != p.Checksum {
+		if diskSum := hasher.Checksum(); diskSum != p.Checksum {
 			st.resetDBPart(p)
-			msg := fmt.Sprintf(
+			integrityMsgs <- fmt.Sprintf(
 				"Identified %s checksum mismatch for %s part %d. Please re-issue the download command to resolve.",
 				p.ChecksumType, p.FileName, p.PartId)
-			integrityMsgs <- msg
 		}
 	}
 }

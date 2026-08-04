@@ -22,9 +22,9 @@ To get started with `dx-download-agent`, download the the latest pre-compiled bi
       "id": "file-YYYY",
       "name": "foo",
       "folder": "/path/to",
-      "checksumType": "CRC64NVME"
+      "checksumType": "CRC64NVME",
       "parts": {
-        "1": { "size": 10, "checksum": "12xUBUlUwUM=" },
+        "1": { "size": 10, "checksum": "12xUBUlUwUM=" }
       }
     },
     "..."

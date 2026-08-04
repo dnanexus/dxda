@@ -239,12 +239,13 @@ func (mRaw ManifestRaw) makeValidatedManifest(ctx context.Context, dxEnv *DXEnvi
 			if fDesc.Symlink == nil {
 				// regular file
 				dxFile := DXFileRegular{
-					Folder: folder,
-					Id:     f.Id,
-					ProjId: projId,
-					Name:   f.Name,
-					Size:   fDesc.Size,
-					Parts:  processFileParts(fDesc.Parts),
+					Folder:       folder,
+					Id:           f.Id,
+					ProjId:       projId,
+					Name:         f.Name,
+					Size:         fDesc.Size,
+					Parts:        processFileParts(fDesc.Parts),
+					ChecksumType: fDesc.ChecksumType,
 				}
 				manifest.Files = append(manifest.Files, dxFile)
 			} else {

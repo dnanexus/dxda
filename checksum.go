@@ -4,9 +4,9 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"hash/crc32"
 
 	"github.com/minio/crc64nvme"
@@ -20,61 +20,51 @@ const (
 	ChecksumSHA1      = "SHA1"
 )
 
-func CalculateChecksum(checksumType string, data []byte) (string, error) {
+// A streaming hasher for one of the supported checksum types. It pairs the
+// hash with the textual encoding used for that checksum type: the CRC
+// variants are represented in base64, the SHA variants in hex.
+type ChecksumHasher struct {
+	hash.Hash
+	encode func([]byte) string
+}
+
+// Create a streaming hasher for the given checksum type. Streaming lets us
+// verify a file part without holding it in memory, which matters because a
+// part can be several hundred megabytes and many are checked in parallel.
+func NewChecksumHasher(checksumType string) (*ChecksumHasher, error) {
 	switch checksumType {
 	case ChecksumCRC64NVME:
-		return calculateCRC64NVME(data), nil
+		return &ChecksumHasher{crc64nvme.New(), base64.StdEncoding.EncodeToString}, nil
 	case ChecksumCRC32C:
-		return calculateCRC32C(data), nil
+		// Castagnoli polynomial is used in CRC32C standard
+		return &ChecksumHasher{crc32.New(crc32.MakeTable(crc32.Castagnoli)), base64.StdEncoding.EncodeToString}, nil
 	case ChecksumCRC32:
-		return calculateCRC32(data), nil
+		// IEEE polynomial is used in CRC32 standard
+		return &ChecksumHasher{crc32.New(crc32.MakeTable(crc32.IEEE)), base64.StdEncoding.EncodeToString}, nil
 	case ChecksumSHA256:
-		return calculateSHA256(data), nil
+		return &ChecksumHasher{sha256.New(), hex.EncodeToString}, nil
 	case ChecksumSHA1:
-		return calculateSHA1(data), nil
+		return &ChecksumHasher{sha1.New(), hex.EncodeToString}, nil
 	default:
-		return "", fmt.Errorf("unsupported checksum type: %s", checksumType)
+		return nil, fmt.Errorf("unsupported checksum type: %s", checksumType)
 	}
 }
 
-func calculateCRC64NVME(data []byte) string {
-	return uint64ToBase64String(crc64nvme.Checksum(data))
+// The checksum of everything written to the hasher so far, in the textual
+// representation used by the platform for this checksum type.
+func (h *ChecksumHasher) Checksum() string {
+	return h.encode(h.Sum(nil))
 }
 
-func calculateCRC32C(data []byte) string {
-	// Castagnoli polynomial is used in CRC32C standard
-	table := crc32.MakeTable(crc32.Castagnoli)
-	return uint32ToBase64String(crc32.Checksum(data, table))
-}
-
-func calculateCRC32(data []byte) string {
-	// IEEE polynomial is used in CRC32 standard
-	table := crc32.MakeTable(crc32.IEEE)
-	return uint32ToBase64String(crc32.Checksum(data, table))
-}
-
-func calculateSHA256(data []byte) string {
-	hasher := sha256.New()
-	hasher.Write(data)
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func calculateSHA1(data []byte) string {
-	hasher := sha1.New()
-	hasher.Write(data)
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func uint64ToBase64String(num uint64) string {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, num)
-
-	return base64.StdEncoding.EncodeToString(buf)
-}
-
-func uint32ToBase64String(num uint32) string {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, num)
-
-	return base64.StdEncoding.EncodeToString(buf)
+// Calculate the checksum of an in-memory buffer. Prefer NewChecksumHasher for
+// anything large enough that we do not want to hold it in memory.
+func CalculateChecksum(checksumType string, data []byte) (string, error) {
+	hasher, err := NewChecksumHasher(checksumType)
+	if err != nil {
+		return "", err
+	}
+	if _, err := hasher.Write(data); err != nil {
+		return "", err
+	}
+	return hasher.Checksum(), nil
 }
