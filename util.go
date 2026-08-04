@@ -26,7 +26,7 @@ const (
 	// than this amount of time
 	dxApiOverallTimeout = 10 * time.Minute
 	// Extracted automatically with a shell script, so keep the format:
-	Version = "v0.6.3"
+	Version = "v0.6.4"
 )
 
 // Configuration options for the download agent
