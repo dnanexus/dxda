@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"strings"
 
 	// The dxda package should contain all core functionality
 	"github.com/dnanexus/dxda"
@@ -21,7 +23,10 @@ type downloadCmd struct {
 
 var err error
 
+const rootDescription = "CLI tool to manage the download of files from the DNAnexus Platform"
 const downloadUsage = "dx-download-agent download [-num_threads=N] <manifest.json.bz2>"
+const inspectSynopsis = "Inspect files downloaded in a manifest and validate their integrity"
+const versionUsage = "dx-download-agent version"
 
 func (*downloadCmd) Name() string     { return "download" }
 func (*downloadCmd) Synopsis() string { return "Download files in a manifest" }
@@ -108,7 +113,7 @@ type progressCmd struct {
 }
 
 func (*progressCmd) Name() string     { return "progress" }
-func (*progressCmd) Synopsis() string { return "show current download progress" }
+func (*progressCmd) Synopsis() string { return "Show current download progress" }
 
 const progressUsage = "dx-download-agent progress <manifest.json.bz2>"
 
@@ -150,13 +155,13 @@ const inspectUsage = "dx-download-agent inspect [-num_threads=N] <manifest.json.
 
 func (*inspectCmd) Name() string { return "inspect" }
 func (*inspectCmd) Synopsis() string {
-	return "Inspect files downloaded in a manifest + additional 'health' checks"
+	return inspectSynopsis
 }
 func (*inspectCmd) Usage() string {
-	return downloadUsage
+	return inspectUsage
 }
 func (p *inspectCmd) SetFlags(f *flag.FlagSet) {
-	f.IntVar(&p.numThreads, "num_threads", 0, "Number of threads to use when downloading files. By default (or if zero), this number is chosen according to machine memory and CPU constraints.")
+	f.IntVar(&p.numThreads, "num_threads", 0, "Number of threads to use when validating files. By default (or if zero), this number is chosen according to machine memory and CPU constraints.")
 	f.BoolVar(&p.verbose, "verbose", false, "verbose logging")
 }
 
@@ -199,16 +204,93 @@ type versionCmd struct {
 }
 
 func (*versionCmd) Name() string               { return "version" }
-func (*versionCmd) Synopsis() string           { return "get the version" }
-func (*versionCmd) Usage() string              { return "get the dx-download-agent version" }
+func (*versionCmd) Synopsis() string           { return "Get the version" }
+func (*versionCmd) Usage() string              { return versionUsage }
 func (p *versionCmd) SetFlags(f *flag.FlagSet) {}
 func (p *versionCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	fmt.Println(dxda.Version)
 	return subcommands.ExitSuccess
 }
 
+func printCommandSummary(w io.Writer, cmd subcommands.Command) {
+	fmt.Fprintf(w, "  %-15s %s\n", cmd.Name(), cmd.Synopsis())
+}
+
+func printFlags(w io.Writer, fs *flag.FlagSet) {
+	fs.VisitAll(func(f *flag.Flag) {
+		name, usage := flag.UnquoteUsage(f)
+		line := fmt.Sprintf("  -%s", f.Name)
+		if name != "" {
+			line += " " + name
+		}
+		fmt.Fprintln(w, line)
+
+		trimmedUsage := strings.TrimSpace(usage)
+		if trimmedUsage == "" {
+			return
+		}
+
+		for _, usageLine := range strings.Split(trimmedUsage, "\n") {
+			fmt.Fprintf(w, "      %s\n", strings.TrimSpace(usageLine))
+		}
+	})
+}
+
+func explainTopLevel(w io.Writer) {
+	fmt.Fprintf(w, "dx-download-agent %s\n", dxda.Version)
+	fmt.Fprintf(w, "%s\n\n", rootDescription)
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintf(w, "  %s\n", downloadUsage)
+	fmt.Fprintf(w, "  %s\n", inspectUsage)
+	fmt.Fprintf(w, "  %s\n", progressUsage)
+	fmt.Fprintf(w, "  %s\n\n", versionUsage)
+	fmt.Fprintln(w, "Authentication:")
+	fmt.Fprintln(w, "  Set DX_API_TOKEN or configure ~/.dnanexus_config/environment.json.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Primary commands:")
+	printCommandSummary(w, &downloadCmd{})
+	printCommandSummary(w, &inspectCmd{})
+	printCommandSummary(w, &progressCmd{})
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Reference commands:")
+	printCommandSummary(w, &versionCmd{})
+	printCommandSummary(w, subcommands.HelpCommand())
+	printCommandSummary(w, subcommands.FlagsCommand())
+	printCommandSummary(w, subcommands.CommandsCommand())
+	fmt.Fprintln(w)
+}
+
+func explainCommand(w io.Writer, cmd subcommands.Command) {
+	usage := strings.TrimSpace(cmd.Usage())
+	if usage != "" {
+		fmt.Fprintln(w, usage)
+	}
+
+	synopsis := strings.TrimSpace(cmd.Synopsis())
+	if synopsis != "" {
+		fmt.Fprintf(w, "\n%s\n", synopsis)
+	}
+
+	subflags := flag.NewFlagSet(cmd.Name(), flag.PanicOnError)
+	cmd.SetFlags(subflags)
+
+	var hasFlags bool
+	subflags.VisitAll(func(*flag.Flag) {
+		hasFlags = true
+	})
+	if !hasFlags {
+		return
+	}
+
+	fmt.Fprintln(w)
+	printFlags(w, subflags)
+}
+
 // The CLI is simply a wrapper around the dxda package
 func main() {
+	subcommands.DefaultCommander.Explain = explainTopLevel
+	subcommands.DefaultCommander.ExplainCommand = explainCommand
+
 	subcommands.Register(subcommands.HelpCommand(), "")
 	subcommands.Register(subcommands.FlagsCommand(), "")
 	subcommands.Register(subcommands.CommandsCommand(), "")
@@ -219,7 +301,7 @@ func main() {
 
 	// TODO: modify this to use individual subcommand help
 	if len(os.Args) == 1 {
-		fmt.Printf("Usage:\n  For progress:\n  $ %s\n\n  For downloading:\n  $ %s\n", progressUsage, downloadUsage)
+		explainTopLevel(os.Stderr)
 		os.Exit(1)
 	}
 
