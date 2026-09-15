@@ -1,36 +1,43 @@
-# DXDA Download Flow (Regular + Symlink)
+# DXDA Download Flow (Regular and Symlink)
 
 ## Purpose
 
-This document explains how `dx-download-agent` (dxda) downloads files in the current implementation.
+This document explains the current DXDA download flow end to end, including:
 
-It covers:
-
-1. Regular file download path
-2. Symlink file download path
-3. Where the flow branches
-4. What is platform metadata vs local download metadata
+1. How manifest input is interpreted
+2. How regular and symlink files are classified
+3. How jobs are materialized into SQLite
+4. How URL preparation and ranged download happen at runtime
+5. Why large part layout can affect effective parallelism
 
 ## One-Page Summary
 
-1. dxda reads and validates the manifest JSON.
-2. If all files already include `parts`, dxda trusts those parts and skips describe.
-3. If any file is missing `parts`, dxda bulk-describes files via `system/findDataObjects`.
-4. After describe, dxda classifies each file:
-   - Regular file: has regular `parts`
-   - Symlink file: `parts` is absent and `drive` is present
-5. dxda writes download work items into SQLite:
-   - `manifest_regular_stats`: one row per regular part
-   - `manifest_symlink_stats`: one row per local symlink chunk
-   - `symlinks`: one row per symlink file (whole-file md5 metadata)
-6. Workers fetch download URLs and perform HTTP `GET` with `Range`.
-7. Progress and resume state are updated in SQLite.
+1. DXDA reads and validates the manifest.
+2. If every file already has parts, DXDA uses trusted mode and skips bulk describe.
+3. If any file is missing parts, DXDA bulk describes via `system/findDataObjects`.
+4. Classification after describe is shape based:
+   - Symlink if `parts == nil` and `drive != nil`
+   - Regular otherwise
+5. SQLite planning tables are populated:
+   - `manifest_regular_stats`: one row per platform part
+   - `manifest_symlink_stats`: one row per local chunk for symlink objects without platform parts
+   - `symlinks`: one row per symlink object for whole file metadata
+6. URL workers prepare pre-authenticated download URLs.
+7. Download workers convert each planned part or chunk row (`offset`, `size`) into a byte range (`Range: bytes=start-end`), then issue HTTP `GET` and write to local offsets.
+8. Progress and resume state are updated in SQLite.
 
-## Manifest Input Format (Recommended)
+## Manifest Input Format
 
-The manifest is a JSON map from `project-xxxx` (or `container-xxxx`) to a list of files.
+The manifest is a map from `project-xxxx` or `container-xxxx` to a list of files.
 
-### A) Regular file with parts already present (trusted path eligible)
+Expected file format in practice:
+
+1. Recommended filename suffix: `*.json.bz2`.
+2. DXDA does not enforce the suffix string directly.
+3. DXDA always reads the file as BZip2-compressed bytes and then parses JSON.
+4. So the actual content must be valid `BZip2 + JSON`, even if the filename uses a different suffix.
+
+### Regular file with parts
 
 ```json
 {
@@ -48,7 +55,7 @@ The manifest is a JSON map from `project-xxxx` (or `container-xxxx`) to a list o
 }
 ```
 
-### B) File without parts (validated path will call API bulk describe)
+### File without parts
 
 ```json
 {
@@ -62,7 +69,7 @@ The manifest is a JSON map from `project-xxxx` (or `container-xxxx`) to a list o
 }
 ```
 
-### C) Symlink-style entry (typically no parts in manifest)
+### Symlink style entry
 
 ```json
 {
@@ -76,125 +83,222 @@ The manifest is a JSON map from `project-xxxx` (or `container-xxxx`) to a list o
 }
 ```
 
-## High-Level Diagram (Easy Step-by-Step)
+## High-Level Flow
+
+This diagram is the end-to-end control flow.
+Step 7 is the data-model handoff where DXDA writes jobs into SQLite tables.
+The next section explains those three tables in detail.
 
 ```mermaid
 flowchart TD
-    S1[Step 1: Read manifest file] --> S2[Step 2: Validate project id, file id, folder]
-    S2 --> S3{Step 3: Do all files already have parts?}
+    S1[Step 1 Read manifest] --> S2[Step 2 Validate project file and folder fields]
+    S2 --> S3{Step 3 Do all files have parts}
 
-    S3 -->|Yes| S4[Step 4A: Trusted path\nUse manifest parts as-is]
-    S3 -->|No| S5[Step 4B: Validated path\nCall API bulk describe]
+    S3 -->|Yes| S4[Step 4A Trusted path use manifest parts]
+    S3 -->|No| S5[Step 4B Validated path call bulk describe]
 
-    S5 --> S6{Step 5: Classify described files}
-    S6 -->|Regular| S7[Use parts returned by describe]
-    S6 -->|Symlink| S8[No platform parts\nMark as symlink]
+    S5 --> S6{Step 5 Classify described objects}
+    S6 -->|Regular| S7[Use platform parts from describe]
+    S6 -->|Symlink| S8[No platform parts and drive present]
 
-    S4 --> S9[Step 6: Build internal manifest objects in memory]
+    S4 --> S9[Step 6 Build internal manifest objects]
     S7 --> S9
     S8 --> S9
 
-    S9 --> S10{Step 7: Insert download plan rows into SQLite tables by file type}
-    S10 -->|Regular| S11[Insert into table manifest_regular_stats\none row per part]
-    S10 -->|Symlink style metadata| S12{Are platform parts present}
-    S12 -->|Yes| S12A[Treated as regular in dxda\ninsert into manifest_regular_stats\none row per platform part]
-    S12 -->|No| S12B[Split into local chunks by maxChunkSize\n16 MiB off platform or 64 MiB in DX job runtime\nthen insert into manifest_symlink_stats]
-    S12B --> S12D[Insert into table symlinks\nwhole-file md5 metadata]
+    S9 --> S10{Step 7 Materialize SQLite download plan}
+    S10 -->|Regular or symlink with parts| S11[Insert manifest_regular_stats one row per platform part]
+    S10 -->|Symlink without parts| S12[Split by maxChunkSize then insert manifest_symlink_stats]
+    S12 --> S12A[Insert one row in symlinks with whole file metadata]
 
-    S11 --> S13[Step 8: Start worker system\nwith configured thread count]
+    S11 --> S13[Step 8 Start workers]
     S12A --> S13
-    S12D --> S13
 
-    S13 --> W1[Step 9: Prepare URL-ready jobs\nURL workers read jobs and prepare url and headers]
-    S13 --> W2[Step 10: Prepare download workers\nworkers wait for URL-ready jobs]
-    W1 --> Q1[Enqueue URL-ready jobs\nshared queue jobsWithUrls]
+    S13 --> W1[Step 9 URL workers prepare url and headers]
+    S13 --> W2[Step 10 Download workers wait for URL ready jobs]
+    W1 --> Q1[Queue jobsWithUrls]
     Q1 --> W2
 
-    W2 --> S14[Step 11: Download chunks via HTTP GET\nwith Range header and write to disk]
-    S14 --> S15[Step 12: Push completion to DB update queue\nthen update SQLite progress timestamps]
+    W2 --> S14[Step 11 Download ranged bytes and write to file offsets]
+    S14 --> S15[Step 12 Update bytes_fetched and completion time in SQLite]
 ```
 
-## Runtime Download Diagram (Workers)
+## Step 7 Data Model: SQLite Tables and Entities
 
-Note: This diagram is a zoom-in of Step 9 through Step 12 from the High-Level Diagram.
-It shows explicit branches for regular and symlink jobs.
+DXDA uses three tables with different responsibilities.
+
+### 1) manifest_regular_stats
+
+1. One row per platform part.
+2. Stores per-part scheduling and progress.
+3. Stores per-part integrity metadata for regular flow (`md5`, `checksum_type`, `checksum`).
+
+### 2) manifest_symlink_stats
+
+1. One row per local symlink chunk created by DXDA when platform parts are absent.
+2. Stores chunk `offset`, `size`, `bytes_fetched`, and `download_done_time`.
+3. Used for parallel chunk download and resume.
+
+### 3) symlinks
+
+1. One row per symlink file.
+2. Stores whole-file metadata (`size`, `md5`) for final integrity check.
+3. Linked to rows in `manifest_symlink_stats` through `file_id`.
+
+### Entity Diagram (ERD)
+
+```mermaid
+erDiagram
+    MANIFEST_REGULAR_STATS {
+        string file_id
+        string project
+        string name
+        string folder
+        int part_id
+        int64 offset
+        int size
+        int bytes_fetched
+        int64 download_done_time
+        string md5
+        string checksum_type
+        string checksum
+    }
+
+    MANIFEST_SYMLINK_STATS {
+        string file_id
+        string project
+        string name
+        string folder
+        int part_id
+        int64 offset
+        int size
+        int bytes_fetched
+        int64 download_done_time
+    }
+
+    SYMLINKS {
+        string folder
+        string id
+        string proj_id
+        string name
+        int64 size
+        string md5
+    }
+
+    SYMLINKS ||--o{ MANIFEST_SYMLINK_STATS : file_id
+```
+
+## Runtime Worker Flow
+
+This zooms into Step 9 through Step 12.
 
 ```mermaid
 flowchart TD
-    A[Load incomplete jobs from SQLite tables] --> B{Classify job type}
+    A[Load incomplete rows from SQLite] --> B{Classify DB job type}
 
-    B -->|Regular DBPartRegular| R1[Prepare URL for regular job]
-    B -->|Symlink DBPartSymlink| S1[Prepare URL for symlink job]
+    B -->|DBPartRegular| R1[Prepare URL for regular job]
+    B -->|DBPartSymlink| S1[Prepare URL for symlink job]
 
-    R1 --> R2{Is this running in a DX job\nwith DX_DXDA_DOWNLOAD_URI set?}
-    R2 -->|Yes| R3[Build URL from DX_DXDA_DOWNLOAD_URI\nand fileId/project, then add X-Authorization]
-    R2 -->|No| R4[Call API file-id/download\nto get pre-authenticated download URL]
+    R1 --> R2{Running in DX job and DX_DXDA_DOWNLOAD_URI is set}
+    R2 -->|Yes| R3[Build URL from DX_DXDA_DOWNLOAD_URI and fileId/project then add X-Authorization]
+    R2 -->|No| R4[Call file-id/download to get pre-authenticated download URL]
 
-    S1 --> S2[Call API file-id/download\nstandard symlink branch DSYM or D2SYM\nto get pre-authenticated download URL]
+    S1 --> S2[Call file-id/download for symlink object]
 
-    R3 --> Q[Enqueue URL-ready job\njobsWithUrls]
+    R3 --> Q[Enqueue URL ready job]
     R4 --> Q
     S2 --> Q
 
-    Q --> D{Download worker consumes URL-ready job}
-    D -->|Regular| DR[HTTP GET with Range header\nRange chunk size uses maxChunkSize\n16 MiB off platform or 64 MiB in DX job\nSub-ranges within one part are sequential in one worker\nWrite chunk to disk\nVerify md5 or checksum]
-    D -->|Symlink| DS[HTTP GET with Range header\nRange chunk size uses maxChunkSize\n16 MiB off platform or 64 MiB in DX job\nEach DBPartSymlink job is one pre-split chunk range\nWrite chunk to disk]
+    Q --> D{Download worker consumes job}
+    D -->|Regular| DR[GET with Range\nmaxChunkSize is 16 MiB off platform or 64 MiB in DX job\nsub-ranges within one part are sequential in one worker\nwrite bytes and verify md5 when present]
+    D -->|Symlink| DS[GET with Range\nmaxChunkSize is 16 MiB off platform or 64 MiB in DX job\neach DBPartSymlink row is one pre-split chunk job\nwrite bytes]
 
-    DR --> U[Push completion to DB update queue]
+    DR --> U[Push completion event]
     DS --> U
-    U --> V[Update SQLite row\nbytes_fetched and download_done_time]
+    U --> V[Update SQLite bytes_fetched and download_done_time]
 ```
 
-## Sequence Diagram (End-to-End)
+## Sequence Diagram
+
+This sequence is the same end-to-end path shown earlier, but expressed as interactions between components.
+It reuses the same step numbering so you can map directly to the previous sections:
+
+1. Step 1 to Step 6: manifest read, validation, and trusted or validated manifest construction.
+2. Step 7: SQLite plan materialization, matching the table roles in Step 7 Data Model.
+3. Step 8 to Step 10: worker startup and URL preparation, matching Runtime Worker Flow.
+4. Step 11 to Step 12: ranged download, local writes, and SQLite progress updates.
 
 ```mermaid
 sequenceDiagram
     participant CLI as dx-download-agent
     participant API as DNAnexus API
     participant DB as Local SQLite
-    participant DL as Download endpoint URL
+    participant DL as Download URL
     participant FS as Local filesystem
 
-    CLI->>CLI: Read manifest + format validation
-    alt All files have parts
+    CLI->>CLI: Read manifest and validate format
+    alt All files already have parts
         CLI->>CLI: genTrustedManifest
-    else Some files missing parts
-        CLI->>API: POST system/findDataObjects (bulk describe)
-        API-->>CLI: describe results (parts for regular, marker for symlink)
+    else Some files are missing parts
+        CLI->>API: POST system/findDataObjects
+        API-->>CLI: describe output including parts and drive fields
         CLI->>CLI: makeValidatedManifest
     end
 
-    CLI->>DB: CreateManifestDB
-    alt Regular file
-        CLI->>DB: Insert rows into manifest_regular_stats
-    else Symlink file
-        CLI->>DB: Split into local chunks and insert manifest_symlink_stats
-        CLI->>DB: Insert whole-file metadata into symlinks
+    CLI->>DB: Check whether manifest stats DB exists
+    alt Stats DB does not exist
+        CLI->>DB: CreateManifestDB
+        alt Regular or symlink with parts
+            CLI->>DB: Insert manifest_regular_stats rows
+        else Symlink without parts
+            CLI->>DB: Split by maxChunkSize and insert manifest_symlink_stats rows
+            CLI->>DB: Insert one row in symlinks
+        end
+    else Stats DB exists
+        CLI->>DB: Validate schema and reuse existing progress rows
     end
 
     loop For each incomplete row
-        alt Regular + DX_DXDA_DOWNLOAD_URI shortcut
-            CLI->>CLI: Build URL from DX_DXDA_DOWNLOAD_URI + fileId/project
-        else Default path (symlink uses standard DSYM or D2SYM branch)
-            CLI->>API: POST file-id/download {project, duration} to get pre-authenticated download URL
-            API-->>CLI: {url, headers}
+        alt Regular in DX job with DX_DXDA_DOWNLOAD_URI
+            CLI->>CLI: Build URL locally from environment variables
+        else Default
+            CLI->>API: POST file-id/download with project and duration
+            API-->>CLI: URL and headers
         end
 
-        CLI->>DL: GET with Range + headers (sub-ranges in one part are sequential in one worker)
+        CLI->>DL: GET with Range and headers
         DL-->>CLI: bytes
-        CLI->>FS: WriteAt(offset)
+        CLI->>FS: WriteAt offset
         opt Regular part
-            CLI->>CLI: Verify md5/checksum
+            CLI->>CLI: If part is larger than maxChunkSize, request sub-ranges sequentially in one worker
+            CLI->>CLI: Verify md5 during download when md5 is present
         end
-        opt Symlink chunk from manifest_symlink_stats
-            CLI->>CLI: One row maps to one maxChunkSize range job
+        opt Symlink chunk row
+            CLI->>CLI: One DB row is one pre-split chunk range
         end
         CLI->>DB: Update bytes_fetched and download_done_time
     end
-
-    CLI->>CLI: Print progress and completion
 ```
 
-## Edge Case to Know
+## Notes
 
-If describe returns `parts=nil` and `drive=nil`, current logic treats it as regular with zero parts. That can result in no download jobs for that file.
+1. Symlink object with `parts`:
+    - It does not go through the local symlink chunk-splitting path.
+    - It is handled as part-based download and inserted into `manifest_regular_stats`.
+
+2. Regular part larger than `maxChunkSize`:
+    - The worker still handles it as a single part job.
+    - Each `GET` fetches one sequential sub-range until the part is complete.
+
+3. Symlink without `parts`:
+    - DXDA pre-splits it into multiple rows in `manifest_symlink_stats`.
+    - These chunk rows can be downloaded in parallel by multiple workers.
+
+4. Resume after interruption:
+    - DXDA reloads incomplete rows from SQLite.
+    - It resumes from `bytes_fetched` and updates `download_done_time` on completion.
+
+5. Different integrity checks by phase and type:
+    - Download phase (regular): validates part MD5 when MD5 is present.
+    - Inspect phase (regular): validates MD5 or checksumType/checksum metadata.
+    - Inspect phase (symlink): validates whole-file MD5 from `symlinks`.
+
