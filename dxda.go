@@ -272,12 +272,7 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	}
 
 	enableRegularPartChunking := parseBoolEnvDefaultTrue(os.Getenv("DXDA_ENABLE_REGULAR_PART_CHUNKING"))
-	regularPartSplitThreshold := int64(2 * maxChunkSize)
-	if rawThreshold := os.Getenv("DXDA_REGULAR_PART_SPLIT_THRESHOLD_BYTES"); rawThreshold != "" {
-		if parsed := safeString2Int(rawThreshold); parsed > 0 {
-			regularPartSplitThreshold = int64(parsed)
-		}
-	}
+	regularPartSplitThreshold := maxChunkSize
 
 	maxInflightChunksPerFile := resolveMaxInflightChunksPerFile(
 		os.Getenv("DXDA_MAX_INFLIGHT_CHUNKS_PER_FILE"),

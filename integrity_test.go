@@ -513,13 +513,12 @@ func TestCheckSchemaVersion(t *testing.T) {
 
 func TestAddRegularFileToTableChunkedWhenEnabled(t *testing.T) {
 	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
-	os.Setenv("DXDA_REGULAR_PART_SPLIT_THRESHOLD_BYTES", "1")
 	t.Cleanup(func() {
 		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
-		os.Unsetenv("DXDA_REGULAR_PART_SPLIT_THRESHOLD_BYTES")
 	})
 
 	st := newTestState(t)
+	st.regularPartSplitThreshold = 1
 
 	bigPart := 20 * MiB
 	reg := DXFileRegular{
@@ -566,10 +565,8 @@ func TestAddRegularFileToTableChunkedWhenEnabled(t *testing.T) {
 
 func TestAddRegularFileToTableNotChunkedWhenDisabled(t *testing.T) {
 	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "0")
-	os.Setenv("DXDA_REGULAR_PART_SPLIT_THRESHOLD_BYTES", "1")
 	t.Cleanup(func() {
 		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
-		os.Unsetenv("DXDA_REGULAR_PART_SPLIT_THRESHOLD_BYTES")
 	})
 
 	st := newTestState(t)
@@ -618,14 +615,13 @@ func TestAddRegularFileToTableNotChunkedWhenDisabled(t *testing.T) {
 
 func TestFinalizeChunkedRegularPartIntegrityFailureResetsChunkRows(t *testing.T) {
 	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
-	os.Setenv("DXDA_REGULAR_PART_SPLIT_THRESHOLD_BYTES", "1")
 	t.Cleanup(func() {
 		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
-		os.Unsetenv("DXDA_REGULAR_PART_SPLIT_THRESHOLD_BYTES")
 	})
 
 	st := newTestState(t)
 	st.maxChunkSize = 8
+	st.regularPartSplitThreshold = 1
 
 	goodContent := bytes.Repeat([]byte("A"), 40)
 	corruptContent := bytes.Repeat([]byte("B"), 40)
