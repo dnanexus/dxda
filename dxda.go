@@ -1011,7 +1011,7 @@ func (st *State) downloadProgressContinuous(stop <-chan struct{}, wg *sync.WaitG
 		select {
 		case <-stop:
 			wg.Done()
-			returngit a
+			return
 		default:
 		}
 
