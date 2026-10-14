@@ -2,8 +2,12 @@ package dxda
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -61,9 +65,9 @@ func writePartFile(t *testing.T, name string, parts ...[]byte) {
 func insertPart(t *testing.T, st *State, p DBPartRegular) {
 	t.Helper()
 	_, err := st.db.Exec(
-		`INSERT INTO manifest_regular_stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO manifest_regular_stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.FileId, p.Project, p.FileName, p.Folder, p.PartId, p.Offset, p.Size, p.MD5,
-		p.Size, 1, p.ChecksumType, p.Checksum)
+		p.Size, 1, p.ChecksumType, p.Checksum, splitModePartRow, 1)
 	if err != nil {
 		t.Fatalf("Could not insert the part: %s", err)
 	}
@@ -444,13 +448,17 @@ func TestCreateManifestDBStoresChecksumColumns(t *testing.T) {
 	}
 }
 
-// A database created before the checksum columns existed must be reported
-// rather than used, since every read of it would fail.
+// A database created before newer columns/tables existed should be migrated
+// in-place and accepted.
 func TestCheckSchemaVersion(t *testing.T) {
 	st := newTestState(t)
 
 	if err := st.CheckSchemaVersion(); err != nil {
 		t.Errorf("Expected the current schema to be accepted, got %v", err)
+	}
+
+	if _, err := st.db.Exec("DROP TABLE manifest_regular_chunk_stats"); err != nil {
+		t.Fatalf("Could not drop chunk table: %s", err)
 	}
 
 	if _, err := st.db.Exec("DROP TABLE manifest_regular_stats"); err != nil {
@@ -465,7 +473,448 @@ func TestCheckSchemaVersion(t *testing.T) {
 		t.Fatalf("Could not create the old table: %s", err)
 	}
 
-	if err := st.CheckSchemaVersion(); err == nil {
-		t.Errorf("Expected an outdated schema to be rejected, got nil")
+	if err := st.CheckSchemaVersion(); err != nil {
+		t.Fatalf("Expected legacy schema to be auto-migrated, got %v", err)
+	}
+
+	for _, col := range []string{"checksum_type", "checksum", "split_mode", "integrity_done"} {
+		hasCol, err := hasColumn(st.db, "manifest_regular_stats", col)
+		if err != nil {
+			t.Fatalf("Could not inspect column %s: %s", col, err)
+		}
+		if !hasCol {
+			t.Fatalf("Expected migrated column %s to exist", col)
+		}
+	}
+
+	hasChunkTable, err := tableExists(st.db, "manifest_regular_chunk_stats")
+	if err != nil {
+		t.Fatalf("Could not inspect chunk table: %s", err)
+	}
+	if !hasChunkTable {
+		t.Fatalf("Expected chunk table to be created by migration")
+	}
+
+	for _, idx := range []string{
+		"idx_regular_chunk_incomplete",
+		"idx_regular_chunk_file_part",
+		"idx_regular_stats_split_incomplete",
+	} {
+		var count int
+		err := st.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?", idx).Scan(&count)
+		if err != nil {
+			t.Fatalf("Could not inspect index %s: %s", idx, err)
+		}
+		if count != 1 {
+			t.Fatalf("Expected index %s to exist after migration", idx)
+		}
+	}
+}
+
+func TestAddRegularFileToTableChunkedWhenEnabled(t *testing.T) {
+	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
+	t.Cleanup(func() {
+		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
+	})
+
+	st := newTestState(t)
+	st.regularPartSplitThreshold = 1
+
+	bigPart := 20 * MiB
+	reg := DXFileRegular{
+		Folder: testFolder,
+		Id:     "file-big-0001",
+		ProjId: "project-0001",
+		Name:   "big.bin",
+		Parts: []DXPart{
+			{Id: 1, Size: bigPart, MD5: testPartMD5},
+		},
+	}
+
+	txn, err := st.db.Begin()
+	if err != nil {
+		t.Fatalf("Could not begin transaction: %s", err)
+	}
+	st.addRegularFileToTable(txn, reg)
+	if err := txn.Commit(); err != nil {
+		t.Fatalf("Could not commit transaction: %s", err)
+	}
+
+	var splitMode string
+	if err := st.db.QueryRow(
+		"SELECT split_mode FROM manifest_regular_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&splitMode); err != nil {
+		t.Fatalf("Could not read split mode: %s", err)
+	}
+	if splitMode != splitModeChunked {
+		t.Fatalf("Expected split mode %q, got %q", splitModeChunked, splitMode)
+	}
+
+	var numChunks int
+	if err := st.db.QueryRow(
+		"SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&numChunks); err != nil {
+		t.Fatalf("Could not count chunk rows: %s", err)
+	}
+	if numChunks < 2 {
+		t.Fatalf("Expected at least 2 chunk rows for large part, got %d", numChunks)
+	}
+}
+
+func TestAddRegularFileToTableNotChunkedWhenDisabled(t *testing.T) {
+	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "0")
+	t.Cleanup(func() {
+		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
+	})
+
+	st := newTestState(t)
+
+	reg := DXFileRegular{
+		Folder: testFolder,
+		Id:     "file-big-0002",
+		ProjId: "project-0001",
+		Name:   "big2.bin",
+		Parts: []DXPart{
+			{Id: 1, Size: 20 * MiB, MD5: testPartMD5},
+		},
+	}
+
+	txn, err := st.db.Begin()
+	if err != nil {
+		t.Fatalf("Could not begin transaction: %s", err)
+	}
+	st.addRegularFileToTable(txn, reg)
+	if err := txn.Commit(); err != nil {
+		t.Fatalf("Could not commit transaction: %s", err)
+	}
+
+	var splitMode string
+	if err := st.db.QueryRow(
+		"SELECT split_mode FROM manifest_regular_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&splitMode); err != nil {
+		t.Fatalf("Could not read split mode: %s", err)
+	}
+	if splitMode != splitModePartRow {
+		t.Fatalf("Expected split mode %q, got %q", splitModePartRow, splitMode)
+	}
+
+	var numChunks int
+	if err := st.db.QueryRow(
+		"SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&numChunks); err != nil {
+		t.Fatalf("Could not count chunk rows: %s", err)
+	}
+	if numChunks != 0 {
+		t.Fatalf("Expected 0 chunk rows when chunking is disabled, got %d", numChunks)
+	}
+}
+
+func TestFinalizeChunkedRegularPartIntegrityFailureResetsChunkRows(t *testing.T) {
+	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
+	t.Cleanup(func() {
+		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
+	})
+
+	st := newTestState(t)
+	st.maxChunkSize = 8
+	st.regularPartSplitThreshold = 1
+
+	goodContent := bytes.Repeat([]byte("A"), 40)
+	corruptContent := bytes.Repeat([]byte("B"), 40)
+	sum := md5.Sum(goodContent)
+	expectedMD5 := hex.EncodeToString(sum[:])
+
+	reg := DXFileRegular{
+		Folder: testFolder,
+		Id:     "file-chunked-reset-0001",
+		ProjId: "project-0001",
+		Name:   "chunked-reset.bin",
+		Parts: []DXPart{
+			{Id: 1, Size: len(goodContent), MD5: expectedMD5},
+		},
+	}
+
+	writePartFile(t, reg.Name, corruptContent)
+
+	txn, err := st.db.Begin()
+	if err != nil {
+		t.Fatalf("Could not begin transaction: %s", err)
+	}
+	st.addRegularFileToTable(txn, reg)
+	if err := txn.Commit(); err != nil {
+		t.Fatalf("Could not commit transaction: %s", err)
+	}
+
+	var splitMode string
+	if err := st.db.QueryRow(
+		"SELECT split_mode FROM manifest_regular_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&splitMode); err != nil {
+		t.Fatalf("Could not read split mode: %s", err)
+	}
+	if splitMode != splitModeChunked {
+		t.Fatalf("Expected split mode %q, got %q", splitModeChunked, splitMode)
+	}
+
+	var chunkRows int
+	if err := st.db.QueryRow(
+		"SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&chunkRows); err != nil {
+		t.Fatalf("Could not count chunk rows: %s", err)
+	}
+	if chunkRows < 2 {
+		t.Fatalf("Expected multiple chunk rows, got %d", chunkRows)
+	}
+
+	if _, err := st.db.Exec(
+		"UPDATE manifest_regular_chunk_stats SET bytes_fetched = size, download_done_time = 1 WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	); err != nil {
+		t.Fatalf("Could not mark chunk rows complete: %s", err)
+	}
+
+	st.maybeFinalizeChunkedRegularPart(reg.Id, 1, 123)
+
+	var parentBytes int
+	var integrityDone int
+	if err := st.db.QueryRow(
+		"SELECT bytes_fetched, integrity_done FROM manifest_regular_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&parentBytes, &integrityDone); err != nil {
+		t.Fatalf("Could not read parent row state: %s", err)
+	}
+	if parentBytes != 0 || integrityDone != 0 {
+		t.Fatalf("Expected parent row reset after integrity failure, got bytes_fetched=%d integrity_done=%d", parentBytes, integrityDone)
+	}
+
+	var remainingCompleted int
+	if err := st.db.QueryRow(
+		"SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE file_id = ? AND part_id = 1 AND bytes_fetched = size",
+		reg.Id,
+	).Scan(&remainingCompleted); err != nil {
+		t.Fatalf("Could not count completed chunks after reset: %s", err)
+	}
+	if remainingCompleted != 0 {
+		t.Fatalf("Expected all chunk rows to be reset, still have %d completed chunks", remainingCompleted)
+	}
+}
+
+func TestPerFileInflightChunkCap(t *testing.T) {
+	st := newTestState(t)
+	st.maxInflightChunksPerFile = 2
+
+	const totalWorkers = 6
+	fileID := "file-cap-0001"
+
+	releaseGate := make(chan struct{})
+	acquired := make(chan struct{}, totalWorkers)
+	done := make(chan struct{}, totalWorkers)
+
+	var mu sync.Mutex
+	inFlight := 0
+	maxSeen := 0
+
+	for i := 0; i < totalWorkers; i++ {
+		go func() {
+			releasePermit := st.acquireRegularChunkPermit(fileID)
+
+			mu.Lock()
+			inFlight += 1
+			if inFlight > maxSeen {
+				maxSeen = inFlight
+			}
+			mu.Unlock()
+
+			acquired <- struct{}{}
+			<-releaseGate
+
+			mu.Lock()
+			inFlight -= 1
+			mu.Unlock()
+
+			releasePermit()
+			done <- struct{}{}
+		}()
+	}
+
+	// Exactly `cap` goroutines should acquire permits immediately.
+	for i := 0; i < st.maxInflightChunksPerFile; i++ {
+		<-acquired
+	}
+
+	// Without releasing a permit, no additional goroutine should acquire one.
+	for i := 0; i < 1000; i++ {
+		select {
+		case <-acquired:
+			t.Fatalf("Per-file cap exceeded: acquired more than %d concurrent chunk permits", st.maxInflightChunksPerFile)
+		default:
+			runtime.Gosched()
+		}
+	}
+
+	close(releaseGate)
+
+	for i := 0; i < totalWorkers; i++ {
+		<-done
+	}
+
+	if maxSeen > st.maxInflightChunksPerFile {
+		t.Fatalf("Per-file cap exceeded: max concurrent=%d cap=%d", maxSeen, st.maxInflightChunksPerFile)
+	}
+}
+
+func TestResolveMaxInflightChunksPerFile(t *testing.T) {
+	if got := resolveMaxInflightChunksPerFile("", 24, 32); got != 16 {
+		t.Fatalf("Expected auto cap 16 for empty env, got %d", got)
+	}
+
+	if got := resolveMaxInflightChunksPerFile("auto", 12, 8); got != 8 {
+		t.Fatalf("Expected auto cap bounded by numThreads (8), got %d", got)
+	}
+
+	if got := resolveMaxInflightChunksPerFile("6", 32, 8); got != 6 {
+		t.Fatalf("Expected explicit cap 6, got %d", got)
+	}
+
+	if got := resolveMaxInflightChunksPerFile("100", 32, 7); got != 7 {
+		t.Fatalf("Expected explicit cap bounded by numThreads (7), got %d", got)
+	}
+
+	if got := resolveMaxInflightChunksPerFile("bad", 10, 20); got != 10 {
+		t.Fatalf("Expected invalid env to fall back to auto cap 10, got %d", got)
+	}
+}
+
+func TestReconcileChunkedRegularParentsFinalizesCompletedParent(t *testing.T) {
+	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
+	t.Cleanup(func() {
+		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
+	})
+
+	st := newTestState(t)
+	st.maxChunkSize = 8
+	st.regularPartSplitThreshold = 1
+
+	content := bytes.Repeat([]byte("A"), 40)
+	sum := md5.Sum(content)
+	expectedMD5 := hex.EncodeToString(sum[:])
+
+	reg := DXFileRegular{
+		Folder: testFolder,
+		Id:     "file-resume-finalize-0001",
+		ProjId: "project-0001",
+		Name:   "resume-finalize.bin",
+		Parts: []DXPart{
+			{Id: 1, Size: len(content), MD5: expectedMD5},
+		},
+	}
+
+	writePartFile(t, reg.Name, content)
+
+	txn, err := st.db.Begin()
+	if err != nil {
+		t.Fatalf("Could not begin transaction: %s", err)
+	}
+	st.addRegularFileToTable(txn, reg)
+	if err := txn.Commit(); err != nil {
+		t.Fatalf("Could not commit transaction: %s", err)
+	}
+
+	if _, err := st.db.Exec(
+		"UPDATE manifest_regular_chunk_stats SET bytes_fetched = size, download_done_time = 1 WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	); err != nil {
+		t.Fatalf("Could not mark chunk rows complete: %s", err)
+	}
+
+	if err := st.reconcileChunkedRegularParents(); err != nil {
+		t.Fatalf("Could not reconcile chunked parents: %s", err)
+	}
+
+	var parentBytes int
+	var integrityDone int
+	if err := st.db.QueryRow(
+		"SELECT bytes_fetched, integrity_done FROM manifest_regular_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&parentBytes, &integrityDone); err != nil {
+		t.Fatalf("Could not read parent row state: %s", err)
+	}
+
+	if parentBytes != len(content) || integrityDone != 1 {
+		t.Fatalf("Expected reconciler to finalize parent, got bytes_fetched=%d integrity_done=%d", parentBytes, integrityDone)
+	}
+}
+
+func TestDownloadManifestDBNoIncompleteJobs(t *testing.T) {
+	st := newTestState(t)
+
+	// Empty manifest: nothing to download must complete without panicking.
+	st.DownloadManifestDB("manifest.json.bz2")
+}
+
+func TestChunkedFinalizeReturnsTerminalErrorAfterRetryBudget(t *testing.T) {
+	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
+	t.Cleanup(func() {
+		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
+	})
+
+	st := newTestState(t)
+	st.maxChunkSize = 8
+	st.regularPartSplitThreshold = 1
+	st.maxChunkFinalizeRetries = 2
+
+	goodContent := bytes.Repeat([]byte("A"), 40)
+	corruptContent := bytes.Repeat([]byte("B"), 40)
+	sum := md5.Sum(goodContent)
+	expectedMD5 := hex.EncodeToString(sum[:])
+
+	reg := DXFileRegular{
+		Folder: testFolder,
+		Id:     "file-finalize-budget-0001",
+		ProjId: "project-0001",
+		Name:   "finalize-budget.bin",
+		Parts: []DXPart{
+			{Id: 1, Size: len(goodContent), MD5: expectedMD5},
+		},
+	}
+
+	writePartFile(t, reg.Name, corruptContent)
+
+	txn, err := st.db.Begin()
+	if err != nil {
+		t.Fatalf("Could not begin transaction: %s", err)
+	}
+	st.addRegularFileToTable(txn, reg)
+	if err := txn.Commit(); err != nil {
+		t.Fatalf("Could not commit transaction: %s", err)
+	}
+
+	markChunkRowsComplete := func() {
+		if _, err := st.db.Exec(
+			"UPDATE manifest_regular_chunk_stats SET bytes_fetched = size, download_done_time = 1 WHERE file_id = ? AND part_id = 1",
+			reg.Id,
+		); err != nil {
+			t.Fatalf("Could not mark chunk rows complete: %s", err)
+		}
+	}
+
+	markChunkRowsComplete()
+	if err := st.maybeFinalizeChunkedRegularPart(reg.Id, 1, 1); err != nil {
+		t.Fatalf("Expected first finalize failure to reset and continue, got %v", err)
+	}
+
+	markChunkRowsComplete()
+	err = st.maybeFinalizeChunkedRegularPart(reg.Id, 1, 2)
+	if err == nil {
+		t.Fatalf("Expected terminal finalize error after retry budget is exhausted")
+	}
+
+	if !strings.Contains(err.Error(), "finalize failed") {
+		t.Fatalf("Expected terminal error to mention finalize failure, got %v", err)
 	}
 }

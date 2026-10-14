@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +35,9 @@ const (
 	numRetries                     = 10
 	numRetriesChecksumMismatch     = 10
 	secondsInYear              int = 60 * 60 * 24 * 365
+
+	splitModePartRow = "part_row"
+	splitModeChunked = "chunked"
 )
 
 var err error
@@ -69,6 +74,8 @@ type DBPartRegular struct {
 	DownloadDoneTime int64 // The time when it completed downloading
 	ChecksumType     string
 	Checksum         string
+	SplitMode        string
+	IntegrityDone    int
 }
 
 func (reg DBPartRegular) folder() string   { return reg.Folder }
@@ -77,6 +84,27 @@ func (reg DBPartRegular) fileId() string   { return reg.FileId }
 func (reg DBPartRegular) project() string  { return reg.Project }
 func (reg DBPartRegular) offset() int64    { return reg.Offset }
 func (reg DBPartRegular) size() int        { return reg.Size }
+
+// Chunk of a large regular part. Chunks are persisted so they can be resumed.
+type DBPartRegularChunk struct {
+	FileId           string
+	Project          string
+	FileName         string
+	Folder           string
+	PartId           int
+	ChunkId          int
+	Offset           int64
+	Size             int
+	BytesFetched     int
+	DownloadDoneTime int64
+}
+
+func (c DBPartRegularChunk) folder() string   { return c.Folder }
+func (c DBPartRegularChunk) fileName() string { return c.FileName }
+func (c DBPartRegularChunk) fileId() string   { return c.FileId }
+func (c DBPartRegularChunk) project() string  { return c.Project }
+func (c DBPartRegularChunk) offset() int64    { return c.Offset }
+func (c DBPartRegularChunk) size() int        { return c.Size }
 
 // symlink parts do not have checksum. There is only a
 // global MD5 checksum on the entire file. There is also
@@ -127,10 +155,64 @@ type State struct {
 	dxEnv           DXEnvironment
 	opts            Opts
 	mutex           sync.Mutex
+	fileChunkSemMu  sync.Mutex
+	fileChunkSem    map[string]chan struct{}
+	chunkStatsMu    sync.Mutex
+	chunkInFlight   map[string]int
+	chunkMaxInFlight map[string]int
+	chunkWorkers    map[string]map[int]struct{}
+	chunkFinalizeMu sync.Mutex
+	chunkFinalizeRetries map[string]int
+	chunkFinalizeFatalErr error
+	maxChunkFinalizeRetries int
 	db              *sql.DB
 	ds              *DownloadStatus // only the progress report thread accesses this field
 	timeOfLastError int
 	maxChunkSize    int64
+	enableRegularPartChunking bool
+	regularPartSplitThreshold int64
+	maxInflightChunksPerFile int
+}
+
+func parseBoolEnvDefaultTrue(v string) bool {
+	switch v {
+	case "", "1", "true", "TRUE", "True", "yes", "YES", "on", "ON":
+		return true
+	case "0", "false", "FALSE", "False", "no", "NO", "off", "OFF":
+		return false
+	default:
+		return true
+	}
+}
+
+func resolveMaxInflightChunksPerFile(rawCap string, numCPUs int, numThreads int) int {
+	autoCap := MinInt(16, numCPUs)
+	if numThreads > 0 {
+		autoCap = MinInt(autoCap, numThreads)
+	}
+	if autoCap < 1 {
+		autoCap = 1
+	}
+
+	capVal := strings.TrimSpace(rawCap)
+	if capVal == "" || strings.EqualFold(capVal, "auto") {
+		return autoCap
+	}
+
+	parsed, err := strconv.Atoi(capVal)
+	if err != nil {
+		return autoCap
+	}
+	if parsed <= 0 {
+		return autoCap
+	}
+	if numThreads > 0 {
+		parsed = MinInt(parsed, numThreads)
+	}
+	if parsed < 1 {
+		return autoCap
+	}
+	return parsed
 }
 
 //-----------------------------------------------------------------
@@ -193,19 +275,42 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 		opts.NumThreads = calcNumThreads(maxChunkSize)
 	}
 
+	enableRegularPartChunking := parseBoolEnvDefaultTrue(os.Getenv("DXDA_ENABLE_REGULAR_PART_CHUNKING"))
+	regularPartSplitThreshold := maxChunkSize
+
+	maxInflightChunksPerFile := resolveMaxInflightChunksPerFile(
+		os.Getenv("DXDA_MAX_INFLIGHT_CHUNKS_PER_FILE"),
+		runtime.NumCPU(),
+		opts.NumThreads,
+	)
+
 	// Limit the number of threads
 	fmt.Printf("Downloading files using %d threads\n", opts.NumThreads)
 	fmt.Printf("maximal memory chunk size: %d MiB\n", maxChunkSize/MiB)
+	fmt.Printf("max in-flight regular chunks per file: %d\n", maxInflightChunksPerFile)
 	//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
 	return &State{
 		dxEnv:           dxEnv,
 		opts:            opts,
 		mutex:           sync.Mutex{},
+		fileChunkSemMu:  sync.Mutex{},
+		fileChunkSem:    make(map[string]chan struct{}),
+		chunkStatsMu:    sync.Mutex{},
+		chunkInFlight:   make(map[string]int),
+		chunkMaxInFlight: make(map[string]int),
+		chunkWorkers:    make(map[string]map[int]struct{}),
+		chunkFinalizeMu: sync.Mutex{},
+		chunkFinalizeRetries: make(map[string]int),
+		chunkFinalizeFatalErr: nil,
+		maxChunkFinalizeRetries: 2,
 		db:              db,
 		ds:              nil,
 		timeOfLastError: 0,
 		maxChunkSize:    maxChunkSize,
+		enableRegularPartChunking: enableRegularPartChunking,
+		regularPartSplitThreshold: regularPartSplitThreshold,
+		maxInflightChunksPerFile: maxInflightChunksPerFile,
 	}
 }
 
@@ -213,16 +318,114 @@ func (st *State) Close() {
 	st.db.Close()
 }
 
+func (st *State) acquireRegularChunkPermit(fileId string) func() {
+	if st.maxInflightChunksPerFile <= 0 {
+		return func() {}
+	}
+
+	st.fileChunkSemMu.Lock()
+	sem, ok := st.fileChunkSem[fileId]
+	if !ok {
+		sem = make(chan struct{}, st.maxInflightChunksPerFile)
+		st.fileChunkSem[fileId] = sem
+	}
+	st.fileChunkSemMu.Unlock()
+
+	sem <- struct{}{}
+	return func() {
+		<-sem
+	}
+}
+
+func regularPartKey(fileId string, partId int) string {
+	return fmt.Sprintf("%s:%d", fileId, partId)
+}
+
+func (st *State) recordRegularChunkStart(fileId string, partId int, workerId int) {
+	key := regularPartKey(fileId, partId)
+
+	st.chunkStatsMu.Lock()
+	defer st.chunkStatsMu.Unlock()
+
+	st.chunkInFlight[key] += 1
+	if st.chunkInFlight[key] > st.chunkMaxInFlight[key] {
+		st.chunkMaxInFlight[key] = st.chunkInFlight[key]
+	}
+
+	if _, ok := st.chunkWorkers[key]; !ok {
+		st.chunkWorkers[key] = make(map[int]struct{})
+	}
+	st.chunkWorkers[key][workerId] = struct{}{}
+}
+
+func (st *State) recordRegularChunkDone(fileId string, partId int) {
+	key := regularPartKey(fileId, partId)
+
+	st.chunkStatsMu.Lock()
+	defer st.chunkStatsMu.Unlock()
+
+	if st.chunkInFlight[key] > 0 {
+		st.chunkInFlight[key] -= 1
+	}
+}
+
+func (st *State) readRegularChunkStats(fileId string, partId int) (int, int) {
+	key := regularPartKey(fileId, partId)
+
+	st.chunkStatsMu.Lock()
+	defer st.chunkStatsMu.Unlock()
+
+	maxInFlight := st.chunkMaxInFlight[key]
+	workers := len(st.chunkWorkers[key])
+	return maxInFlight, workers
+}
+
+func (st *State) bumpChunkFinalizeRetry(fileId string, partId int) int {
+	key := regularPartKey(fileId, partId)
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	st.chunkFinalizeRetries[key] += 1
+	return st.chunkFinalizeRetries[key]
+}
+
+func (st *State) clearChunkFinalizeRetry(fileId string, partId int) {
+	key := regularPartKey(fileId, partId)
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	delete(st.chunkFinalizeRetries, key)
+}
+
+func (st *State) setChunkFinalizeFatalErr(err error) {
+	if err == nil {
+		return
+	}
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	if st.chunkFinalizeFatalErr == nil {
+		st.chunkFinalizeFatalErr = err
+	}
+}
+
+func (st *State) clearChunkFinalizeFatalErr() {
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	st.chunkFinalizeFatalErr = nil
+}
+
+func (st *State) getChunkFinalizeFatalErr() error {
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	return st.chunkFinalizeFatalErr
+}
+
 // Returns an error if the schema is outdated and requires recreation.
-func checkSchemaVersion(db *sql.DB) error {
-	rows, err := db.Query("PRAGMA table_info(manifest_regular_stats)")
+func hasColumn(db *sql.DB, tableName string, columnName string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer rows.Close()
 
-	// Check if checksum column exists
-	hasChecksumColumns := false
 	for rows.Next() {
 		var (
 			cid       int
@@ -234,18 +437,155 @@ func checkSchemaVersion(db *sql.DB) error {
 		)
 
 		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
-			return err
+			return false, err
 		}
-
-		// both checksum and checksum_type columns were added in the same version
-		if name == "checksum_type" {
-			hasChecksumColumns = true
-			break
+		if name == columnName {
+			return true, nil
 		}
 	}
 
-	if !hasChecksumColumns {
-		return fmt.Errorf("database schema is outdated (missing checksum columns). Please delete the .stats.db file and re-run the download to recreate the manifest database")
+	return false, nil
+}
+
+func tableExists(db *sql.DB, tableName string) (bool, error) {
+	var cnt int
+	err := db.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+		tableName,
+	).Scan(&cnt)
+	if err != nil {
+		return false, err
+	}
+	return cnt > 0, nil
+}
+
+func createChunkIndexes(db *sql.DB) error {
+	indexStmts := []string{
+		"CREATE INDEX IF NOT EXISTS idx_regular_chunk_incomplete ON manifest_regular_chunk_stats(bytes_fetched, size)",
+		"CREATE INDEX IF NOT EXISTS idx_regular_chunk_file_part ON manifest_regular_chunk_stats(file_id, part_id)",
+		"CREATE INDEX IF NOT EXISTS idx_regular_stats_split_incomplete ON manifest_regular_stats(split_mode, bytes_fetched, size)",
+	}
+	for _, stmt := range indexStmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateSchemaVersion(db *sql.DB) error {
+	hasRegularTable, err := tableExists(db, "manifest_regular_stats")
+	if err != nil {
+		return err
+	}
+	if !hasRegularTable {
+		return nil
+	}
+
+	if ok, err := hasColumn(db, "manifest_regular_stats", "checksum_type"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN checksum_type text"); err != nil {
+			return err
+		}
+		if _, err := db.Exec("UPDATE manifest_regular_stats SET checksum_type = '' WHERE checksum_type IS NULL"); err != nil {
+			return err
+		}
+	}
+
+	if ok, err := hasColumn(db, "manifest_regular_stats", "checksum"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN checksum text"); err != nil {
+			return err
+		}
+		if _, err := db.Exec("UPDATE manifest_regular_stats SET checksum = '' WHERE checksum IS NULL"); err != nil {
+			return err
+		}
+	}
+
+	if ok, err := hasColumn(db, "manifest_regular_stats", "split_mode"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN split_mode text"); err != nil {
+			return err
+		}
+		if _, err := db.Exec(fmt.Sprintf("UPDATE manifest_regular_stats SET split_mode = '%s' WHERE split_mode IS NULL OR split_mode = ''", splitModePartRow)); err != nil {
+			return err
+		}
+	}
+
+	if ok, err := hasColumn(db, "manifest_regular_stats", "integrity_done"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN integrity_done integer"); err != nil {
+			return err
+		}
+		if _, err := db.Exec("UPDATE manifest_regular_stats SET integrity_done = 0 WHERE integrity_done IS NULL"); err != nil {
+			return err
+		}
+	}
+
+	hasChunkTable, err := tableExists(db, "manifest_regular_chunk_stats")
+	if err != nil {
+		return err
+	}
+	if !hasChunkTable {
+		if _, err := db.Exec(`
+			CREATE TABLE manifest_regular_chunk_stats (
+				file_id text,
+				project text,
+				name text,
+				folder text,
+				part_id integer,
+				chunk_id integer,
+				offset integer,
+				size integer,
+				bytes_fetched integer,
+				download_done_time integer
+			)
+		`); err != nil {
+			return err
+		}
+	}
+
+	return createChunkIndexes(db)
+}
+
+func ensureSchemaCompatibility(db *sql.DB) error {
+	hasRegularTable, err := tableExists(db, "manifest_regular_stats")
+	if err != nil {
+		return err
+	}
+	if !hasRegularTable {
+		// New DB with no schema yet; compatibility check is not applicable.
+		return nil
+	}
+
+	if err := migrateSchemaVersion(db); err != nil {
+		return err
+	}
+	return checkSchemaVersion(db)
+}
+
+func checkSchemaVersion(db *sql.DB) error {
+	mandatoryColumns := []string{"checksum_type", "split_mode", "integrity_done"}
+	for _, colName := range mandatoryColumns {
+		hasCol, err := hasColumn(db, "manifest_regular_stats", colName)
+		if err != nil {
+			return err
+		}
+		if !hasCol {
+			return fmt.Errorf("database schema is outdated (missing %s column). Please delete the .stats.db file and re-run the download to recreate the manifest database", colName)
+		}
+	}
+
+	hasChunkTable, err := tableExists(db, "manifest_regular_chunk_stats")
+	if err != nil {
+		return err
+	}
+	if !hasChunkTable {
+		return fmt.Errorf("database schema is outdated (missing manifest_regular_chunk_stats table). Please delete the .stats.db file and re-run the download to recreate the manifest database")
 	}
 
 	return nil
@@ -254,7 +594,7 @@ func checkSchemaVersion(db *sql.DB) error {
 // CheckSchemaVersion verifies the database schema is compatible with current version.
 // Returns an error if the schema is outdated and requires recreation.
 func (st *State) CheckSchemaVersion() error {
-	return checkSchemaVersion(st.db)
+	return ensureSchemaCompatibility(st.db)
 }
 
 // Probably a better way to do this :)
@@ -305,7 +645,8 @@ func (st *State) CheckDiskSpace() error {
 	// query the database, and sum the space for missing pieces.
 	//
 	totalSizeBytes :=
-		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats WHERE bytes_fetched != size") +
+		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats WHERE split_mode = 'part_row' AND bytes_fetched != size") +
+			st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_chunk_stats WHERE bytes_fetched != size") +
 			st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats WHERE bytes_fetched != size")
 
 	// Find how much local disk space is available
@@ -337,13 +678,38 @@ func (st *State) CheckDiskSpace() error {
 func (st *State) addRegularFileToTable(txn *sql.Tx, f DXFileRegular) {
 	offset := int64(0)
 	for _, p := range f.Parts {
+		splitMode := splitModePartRow
+		if st.enableRegularPartChunking && int64(p.Size) > st.regularPartSplitThreshold {
+			splitMode = splitModeChunked
+		}
+
 		sqlStmt := fmt.Sprintf(`
 				INSERT INTO manifest_regular_stats
-				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d', '%s', '%s');
+				VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%s', '%d', '%d', '%s', '%s', '%s', '%d');
 				`,
-			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0, safeDeref(f.ChecksumType, ""), safeDeref(p.Checksum, ""))
+			f.Id, f.ProjId, f.Name, f.Folder, p.Id, offset, p.Size, p.MD5, 0, 0, safeDeref(f.ChecksumType, ""), safeDeref(p.Checksum, ""), splitMode, 0)
 		_, err := txn.Exec(sqlStmt)
 		check(err)
+
+		if splitMode == splitModeChunked {
+			chunkId := 1
+			chunkOffset := offset
+			endPart := offset + int64(p.Size)
+			for chunkOffset < endPart {
+				chunkEnd := MinInt64(chunkOffset+st.maxChunkSize, endPart)
+				chunkSize := chunkEnd - chunkOffset
+				chunkStmt := fmt.Sprintf(`
+					INSERT INTO manifest_regular_chunk_stats
+					VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d');
+					`,
+					f.Id, f.ProjId, f.Name, f.Folder, p.Id, chunkId, chunkOffset, chunkSize, 0, 0)
+				_, err := txn.Exec(chunkStmt)
+				check(err)
+				chunkOffset = chunkEnd
+				chunkId += 1
+			}
+		}
+
 		offset += int64(p.Size)
 	}
 }
@@ -404,10 +770,32 @@ func (st *State) CreateManifestDB(manifest Manifest, fname string) {
 		bytes_fetched integer,
                 download_done_time integer,
 		checksum_type text,
-		checksum text
+		checksum text,
+		split_mode text,
+		integrity_done integer
 	);
 	`
 	_, err = st.db.Exec(sqlStmt)
+	check(err)
+
+	sqlStmt = `
+	CREATE TABLE manifest_regular_chunk_stats (
+		file_id text,
+		project text,
+		name text,
+		folder text,
+		part_id integer,
+		chunk_id integer,
+		offset integer,
+		size integer,
+		bytes_fetched integer,
+		download_done_time integer
+	);
+	`
+	_, err = st.db.Exec(sqlStmt)
+	check(err)
+
+	err = createChunkIndexes(st.db)
 	check(err)
 
 	// symbolic link parts do not have md5 checksums
@@ -488,10 +876,12 @@ func (st *State) PrepareFilesForDownload(m Manifest) {
 func (st *State) InitDownloadStatus() {
 	// total amounts to download, calculated once
 	numParts :=
-		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats") +
+		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE split_mode = 'part_row'") +
+			st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_chunk_stats") +
 			st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats")
 	numBytes :=
-		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats") +
+		st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_stats WHERE split_mode = 'part_row'") +
+			st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_regular_chunk_stats") +
 			st.queryDBIntegerResult("SELECT SUM(size) FROM manifest_symlink_stats")
 
 	progressIntervalSec := 0
@@ -531,16 +921,21 @@ func (st *State) calcBandwidth(timeWindowNanoSec int64) float64 {
 	lowerBound := now - timeWindowNanoSec
 
 	queryReg := fmt.Sprintf(
-		"SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE download_done_time > %d",
+		"SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE split_mode = 'part_row' AND download_done_time > %d",
 		lowerBound)
 	regBytesDownloadedInTimeWindow := st.queryDBIntegerResult(queryReg)
+
+	queryRegChunk := fmt.Sprintf(
+		"SELECT SUM(bytes_fetched) FROM manifest_regular_chunk_stats WHERE download_done_time > %d",
+		lowerBound)
+	regChunkBytesDownloadedInTimeWindow := st.queryDBIntegerResult(queryRegChunk)
 
 	querySlnk := fmt.Sprintf(
 		"SELECT SUM(bytes_fetched) FROM manifest_symlink_stats WHERE download_done_time > %d",
 		lowerBound)
 	slnkBytesDownloadedInTimeWindow := st.queryDBIntegerResult(querySlnk)
 
-	bytesDownloadedInTimeWindow := regBytesDownloadedInTimeWindow + slnkBytesDownloadedInTimeWindow
+	bytesDownloadedInTimeWindow := regBytesDownloadedInTimeWindow + regChunkBytesDownloadedInTimeWindow + slnkBytesDownloadedInTimeWindow
 
 	// convert to megabytes downloaded divided by seconds
 	mbDownloaded := float64(bytesDownloadedInTimeWindow) / float64(1024*1024)
@@ -557,10 +952,12 @@ func bytes2MiB(bytes int64) int64 {
 func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 	// query the current progress
 	st.ds.NumBytesComplete =
-		st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE bytes_fetched = size") +
+		st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_regular_stats WHERE split_mode = 'part_row' AND bytes_fetched = size") +
+			st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_regular_chunk_stats WHERE bytes_fetched = size") +
 			st.queryDBIntegerResult("SELECT SUM(bytes_fetched) FROM manifest_symlink_stats WHERE bytes_fetched = size")
 	st.ds.NumPartsComplete =
-		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched = size") +
+		st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE split_mode = 'part_row' AND bytes_fetched = size") +
+			st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE bytes_fetched = size") +
 			st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched = size")
 
 	// calculate bandwitdh
@@ -591,7 +988,7 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 }
 
 // A loop that reports on download progress periodically.
-func (st *State) downloadProgressContinuous(wg *sync.WaitGroup) {
+func (st *State) downloadProgressContinuous(stop <-chan struct{}, wg *sync.WaitGroup) {
 	// Start time of the measurements, in nano seconds
 	startTime := time.Now()
 	lastReportTs := startTime
@@ -599,10 +996,25 @@ func (st *State) downloadProgressContinuous(wg *sync.WaitGroup) {
 	// only the progress-report thread has access to the "ds" state
 	// field. That is why no locking is required here.
 	for true {
+		select {
+		case <-stop:
+			wg.Done()
+			return
+		default:
+		}
+
 		// Sleep for a number of seconds, so as to not flood the screen
 		// with messages. This also substantially limits the number
 		// of database queries.
 		time.Sleep(1 * time.Second)
+
+		select {
+		case <-stop:
+			wg.Done()
+			return
+		default:
+		}
+
 		if st.ds.NumPartsComplete >= st.ds.NumParts {
 			// signal that the thread is done
 			wg.Done()
@@ -658,6 +1070,34 @@ func (st *State) downloadSymlinkPart(
 	for k, v := range u.Headers {
 		headers[k] = v
 	}
+	err = DxHttpRequestData(context.TODO(), httpClient, "GET", u.URL, headers, []byte("{}"), p.Size, memoryBuf)
+	check(err)
+	body := memoryBuf[:p.Size]
+
+	_, err = localf.WriteAt(body, p.offset())
+	check(err)
+
+	return nil
+}
+
+// Download one persisted chunk for a large regular part.
+func (st *State) downloadRegularChunkPart(
+	httpClient *http.Client,
+	p DBPartRegularChunk,
+	u DXDownloadURL,
+	memoryBuf []byte) error {
+
+	fname := fmt.Sprintf(".%s/%s", p.folder(), p.fileName())
+	localf, err := os.OpenFile(fname, os.O_WRONLY, 0777)
+	check(err)
+	defer localf.Close()
+
+	headers := make(map[string]string)
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", p.offset(), p.offset()+int64(p.size())-1)
+	for k, v := range u.Headers {
+		headers[k] = v
+	}
+
 	err = DxHttpRequestData(context.TODO(), httpClient, "GET", u.URL, headers, []byte("{}"), p.Size, memoryBuf)
 	check(err)
 	body := memoryBuf[:p.Size]
@@ -808,6 +1248,9 @@ func (st *State) preauthUrlsWorker(jobs <-chan JobInfo, jobsWithUrls chan JobInf
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
 			j.url = st.createURL(pLnk, urls, httpClient)
+		case DBPartRegularChunk:
+			pChunk := j.part.(DBPartRegularChunk)
+			j.url = st.createURL(pChunk, urls, httpClient)
 		}
 
 		jobsWithUrls <- j
@@ -824,15 +1267,23 @@ func (st *State) worker(id int, jobsWithUrls <-chan JobInfo, jobsDbUpdate chan J
 	memoryBuf := make([]byte, st.maxChunkSize)
 
 	for j := range jobsWithUrls {
+		releasePermit := func() {}
 		switch j.part.(type) {
 		case DBPartRegular:
 			p := j.part.(DBPartRegular)
 			st.downloadRegPart(httpClient, p, *j.url, memoryBuf)
+		case DBPartRegularChunk:
+			pChunk := j.part.(DBPartRegularChunk)
+			releasePermit = st.acquireRegularChunkPermit(pChunk.FileId)
+			st.recordRegularChunkStart(pChunk.FileId, pChunk.PartId, id)
+			st.downloadRegularChunkPart(httpClient, pChunk, *j.url, memoryBuf)
+			st.recordRegularChunkDone(pChunk.FileId, pChunk.PartId)
 
 		case DBPartSymlink:
 			pLnk := j.part.(DBPartSymlink)
 			st.downloadSymlinkPart(httpClient, pLnk, *j.url, memoryBuf)
 		}
+		releasePermit()
 
 		// move the jobs to the next phase, which is updating the database
 		j.completeNs = time.Now().UnixNano()
@@ -841,19 +1292,177 @@ func (st *State) worker(id int, jobsWithUrls <-chan JobInfo, jobsDbUpdate chan J
 	wg.Done()
 }
 
+func (st *State) checkRegularPartIntegrityNoReset(p DBPartRegular) error {
+	fname := fmt.Sprintf(".%s/%s", p.Folder, p.FileName)
+	if _, err := os.Stat(fname); os.IsNotExist(err) {
+		return fmt.Errorf("file %s does not exist", fname)
+	}
+
+	hasChecksum := p.ChecksumType != "" && p.Checksum != ""
+	if p.MD5 == "" && !hasChecksum {
+		return nil
+	}
+
+	localf, err := os.Open(fname)
+	if err != nil {
+		return err
+	}
+	defer localf.Close()
+
+	if _, err := localf.Seek(p.Offset, 0); err != nil {
+		return err
+	}
+	partReader := io.LimitReader(localf, int64(p.Size))
+
+	if p.MD5 != "" {
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, partReader); err != nil {
+			return err
+		}
+		diskSum := hex.EncodeToString(hasher.Sum(nil))
+		if diskSum != p.MD5 {
+			return fmt.Errorf("md5sum mismatch for %s part %d", p.FileName, p.PartId)
+		}
+		return nil
+	}
+
+	hasher, err := NewChecksumHasher(p.ChecksumType)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(hasher, partReader); err != nil {
+		return err
+	}
+	if hasher.Checksum() != p.Checksum {
+		return fmt.Errorf("%s checksum mismatch for %s part %d", p.ChecksumType, p.FileName, p.PartId)
+	}
+
+	return nil
+}
+
+func (st *State) markChunkedPartComplete(fileId string, partId int, tsNanoSec int64) {
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
+	_, err := st.db.Exec(
+		"UPDATE manifest_regular_stats SET bytes_fetched = size, download_done_time = ?, integrity_done = 1 WHERE file_id = ? AND part_id = ?",
+		tsNanoSec, fileId, partId,
+	)
+	check(err)
+}
+
+func (st *State) resetChunkedPartState(fileId string, partId int) {
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
+	tx, err := st.db.Begin()
+	check(err)
+	defer tx.Commit()
+
+	_, err = tx.Exec(
+		"UPDATE manifest_regular_chunk_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = ? AND part_id = ?",
+		fileId, partId,
+	)
+	check(err)
+
+	_, err = tx.Exec(
+		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0, integrity_done = 0 WHERE file_id = ? AND part_id = ?",
+		fileId, partId,
+	)
+	check(err)
+}
+
+func (st *State) maybeFinalizeChunkedRegularPart(fileId string, partId int, tsNanoSec int64) error {
+	var p DBPartRegular
+	st.mutex.Lock()
+	err := st.db.QueryRow(
+		`SELECT file_id, project, name, folder, part_id, offset, size, md5, bytes_fetched, download_done_time, checksum_type, checksum, split_mode, integrity_done
+		 FROM manifest_regular_stats WHERE file_id = ? AND part_id = ?`,
+		fileId, partId,
+	).Scan(
+		&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset, &p.Size, &p.MD5,
+		&p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum, &p.SplitMode, &p.IntegrityDone,
+	)
+	if err != nil {
+		st.mutex.Unlock()
+		return err
+	}
+	if p.SplitMode != splitModeChunked || p.IntegrityDone == 1 {
+		st.mutex.Unlock()
+		return nil
+	}
+
+	var completedBytes int64
+	err = st.db.QueryRow(
+		"SELECT COALESCE(SUM(bytes_fetched), 0) FROM manifest_regular_chunk_stats WHERE file_id = ? AND part_id = ?",
+		fileId, partId,
+	).Scan(&completedBytes)
+	st.mutex.Unlock()
+	if err != nil {
+		return err
+	}
+
+	if completedBytes < int64(p.Size) {
+		return nil
+	}
+
+	if err := st.checkRegularPartIntegrityNoReset(p); err != nil {
+		attempt := st.bumpChunkFinalizeRetry(fileId, partId)
+		log.Printf("Chunked regular part failed integrity (%s part %d, attempt %d/%d): %s", p.FileId, p.PartId, attempt, st.maxChunkFinalizeRetries, err.Error())
+		if attempt >= st.maxChunkFinalizeRetries {
+			return fmt.Errorf("chunked regular part finalize failed after %d attempts (%s part %d): %w", attempt, p.FileId, p.PartId, err)
+		}
+		st.resetChunkedPartState(fileId, partId)
+		return nil
+	}
+
+	st.markChunkedPartComplete(fileId, partId, tsNanoSec)
+	st.clearChunkFinalizeRetry(fileId, partId)
+
+	maxInFlight, workerCount := st.readRegularChunkStats(fileId, partId)
+	log.Printf(
+		"Chunked regular part complete file_id=%s part_id=%d max_concurrent_workers=%d distinct_workers=%d",
+		fileId,
+		partId,
+		maxInFlight,
+		workerCount,
+	)
+
+	return nil
+}
+
 func (st *State) dbApplyBulkUpdates(completedJobs []JobInfo) {
 	if len(completedJobs) == 0 {
 		return
 	}
-	st.mutex.Lock()
-	defer st.mutex.Unlock()
 
+	var chunkedPartsToFinalize []DBPartRegularChunk
+	for _, j := range completedJobs {
+		switch j.part.(type) {
+		case DBPartRegularChunk:
+			chunkedPartsToFinalize = append(chunkedPartsToFinalize, j.part.(DBPartRegularChunk))
+		}
+	}
+
+	st.mutex.Lock()
 	txn, err := st.db.Begin()
 	check(err)
-	defer txn.Commit()
 
 	for _, j := range completedJobs {
 		st.updateDBPart(txn, j.part, j.completeNs)
+	}
+	if err := txn.Commit(); err != nil {
+		st.mutex.Unlock()
+		check(err)
+	}
+	st.mutex.Unlock()
+
+	now := time.Now().UnixNano()
+	for _, chunk := range chunkedPartsToFinalize {
+		if err := st.maybeFinalizeChunkedRegularPart(chunk.FileId, chunk.PartId, now); err != nil {
+			st.setChunkFinalizeFatalErr(err)
+			return
+		}
 	}
 }
 
@@ -873,99 +1482,183 @@ func (st *State) dbUpdateWorker(jobsDbUpdate <-chan JobInfo, wg *sync.WaitGroup)
 	wg.Done()
 }
 
+func (st *State) reconcileChunkedRegularParents() error {
+	rows, err := st.db.Query("SELECT file_id, part_id FROM manifest_regular_stats WHERE split_mode = ? AND integrity_done = 0", splitModeChunked)
+	if err != nil {
+		return err
+	}
+
+	type parentPart struct {
+		fileId string
+		partId int
+	}
+
+	var pending []parentPart
+	for rows.Next() {
+		var fileId string
+		var partId int
+		if err := rows.Scan(&fileId, &partId); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, parentPart{fileId: fileId, partId: partId})
+	}
+
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	now := time.Now().UnixNano()
+	for _, p := range pending {
+		if err := st.maybeFinalizeChunkedRegularPart(p.fileId, p.partId, now); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (st *State) countIncompleteJobs() int64 {
+	cntReg := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE split_mode = 'part_row' AND bytes_fetched != size")
+	cntRegChunked := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE bytes_fetched != size")
+	cntSlnk := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched != size")
+	return cntReg + cntRegChunked + cntSlnk
+}
+
 // Download all the files that are mentioned in the manifest.
 func (st *State) DownloadManifestDB(fname string) {
 	if st.opts.Verbose {
 		log.Printf("DownloadManifestDB %s\n", fname)
 	}
 	st.timeOfLastError = time.Now().Second()
+	st.clearChunkFinalizeFatalErr()
 
-	// build a job-channel that will hold all the parts. If we make it too small,
-	// we will block before creating the worker threads.
-	cntReg := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE bytes_fetched != size")
-	cntSlnk := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched != size")
-	totNumJobs := cntReg + cntSlnk
-	jobs := make(chan JobInfo, totNumJobs)
+	// The extra round lets the top-of-loop reconcile finalize parts completed in the last download round.
+	maxRounds := st.maxChunkFinalizeRetries + 3
 
-	// create a job for each incomplete data file part
-	rows, err := st.db.Query("SELECT * FROM manifest_regular_stats WHERE bytes_fetched != size")
-	check(err)
-
-	numRows := 0
-	for rows.Next() {
-		var p DBPartRegular
-		err := rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum)
-		check(err)
-		j := JobInfo{
-			part: p,
-			url:  nil,
+	for round := 1; round <= maxRounds; round++ {
+		if err := st.reconcileChunkedRegularParents(); err != nil {
+			panic(err)
 		}
-		jobs <- j
-		numRows++
-	}
-	rows.Close()
-	if st.opts.Verbose {
-		log.Printf("There are %d regular file pieces\n", numRows)
-	}
 
-	// create a job for each imcomplete data symlink part
-	rows, err = st.db.Query("SELECT * FROM manifest_symlink_stats WHERE bytes_fetched != size")
-	check(err)
-
-	for rows.Next() {
-		var p DBPartSymlink
-		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
-		check(err)
-		j := JobInfo{
-			part: p,
-			url:  nil,
+		if fatal := st.getChunkFinalizeFatalErr(); fatal != nil {
+			panic(fatal)
 		}
-		jobs <- j
+
+		totNumJobs := st.countIncompleteJobs()
+		if totNumJobs == 0 {
+			st.InitDownloadStatus() // ds is nil until initialized
+			PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
+			PrintLogAndOut("Download completed successfully.\n")
+			PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
+			return
+		}
+
+		jobs := make(chan JobInfo, totNumJobs)
+
+		// create a job for each incomplete data file part
+		rows, err := st.db.Query(
+			"SELECT file_id, project, name, folder, part_id, offset, size, md5, bytes_fetched, download_done_time, checksum_type, checksum, split_mode, integrity_done FROM manifest_regular_stats WHERE split_mode = ? AND bytes_fetched != size",
+			splitModePartRow,
+		)
+		check(err)
+
+		numRows := 0
+		for rows.Next() {
+			var p DBPartRegular
+			err := rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
+				&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum, &p.SplitMode, &p.IntegrityDone)
+			check(err)
+			j := JobInfo{
+				part: p,
+				url:  nil,
+			}
+			jobs <- j
+			numRows++
+		}
+		rows.Close()
+		if st.opts.Verbose {
+			log.Printf("There are %d regular file pieces\n", numRows)
+		}
+
+		rows, err = st.db.Query("SELECT file_id, project, name, folder, part_id, chunk_id, offset, size, bytes_fetched, download_done_time FROM manifest_regular_chunk_stats WHERE bytes_fetched != size")
+		check(err)
+		for rows.Next() {
+			var p DBPartRegularChunk
+			err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.ChunkId, &p.Offset,
+				&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
+			check(err)
+			j := JobInfo{
+				part: p,
+				url:  nil,
+			}
+			jobs <- j
+		}
+		rows.Close()
+
+		// create a job for each imcomplete data symlink part
+		rows, err = st.db.Query("SELECT * FROM manifest_symlink_stats WHERE bytes_fetched != size")
+		check(err)
+
+		for rows.Next() {
+			var p DBPartSymlink
+			err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
+				&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
+			check(err)
+			j := JobInfo{
+				part: p,
+				url:  nil,
+			}
+			jobs <- j
+		}
+		rows.Close()
+
+		// Close the job channel, there will be no more jobs.
+		close(jobs)
+
+		// the preauth thread adds a valid URL to each job.
+		jobsWithUrls := make(chan JobInfo, totNumJobs)
+		go st.preauthUrlsWorker(jobs, jobsWithUrls, &st.dxEnv)
+
+		// the db-update thread updates the database when jobs
+		// complete.
+		var wgDb sync.WaitGroup
+		jobsDbUpdate := make(chan JobInfo, totNumJobs)
+		wgDb.Add(1)
+		go st.dbUpdateWorker(jobsDbUpdate, &wgDb)
+
+		// start concurrent workers to download the file parts
+		var wgDownload sync.WaitGroup
+		for w := 1; w <= st.opts.NumThreads; w++ {
+			wgDownload.Add(1)
+			go st.worker(w, jobsWithUrls, jobsDbUpdate, &wgDownload)
+		}
+
+		var wgProgressReport sync.WaitGroup
+		progressStop := make(chan struct{})
+		wgProgressReport.Add(1)
+		st.InitDownloadStatus()
+		go st.downloadProgressContinuous(progressStop, &wgProgressReport)
+
+		// wait for downloads to complete
+		wgDownload.Wait()
+		close(jobsDbUpdate)
+
+		// wait for database updates to complete
+		wgDb.Wait()
+
+		close(progressStop)
+		// wait for progress report thread
+		wgProgressReport.Wait()
+
+		if fatal := st.getChunkFinalizeFatalErr(); fatal != nil {
+			panic(fatal)
+		}
 	}
-	rows.Close()
 
-	// Close the job channel, there will be no more jobs.
-	close(jobs)
-
-	// the preauth thread adds a valid URL to each job.
-	jobsWithUrls := make(chan JobInfo, totNumJobs)
-	go st.preauthUrlsWorker(jobs, jobsWithUrls, &st.dxEnv)
-
-	// the db-update thread updates the database when jobs
-	// complete.
-	var wgDb sync.WaitGroup
-	jobsDbUpdate := make(chan JobInfo, totNumJobs)
-	wgDb.Add(1)
-	go st.dbUpdateWorker(jobsDbUpdate, &wgDb)
-
-	// start concurrent workers to download the file parts
-	var wgDownload sync.WaitGroup
-	for w := 1; w <= st.opts.NumThreads; w++ {
-		wgDownload.Add(1)
-		go st.worker(w, jobsWithUrls, jobsDbUpdate, &wgDownload)
-	}
-
-	var wgProgressReport sync.WaitGroup
-	wgProgressReport.Add(1)
-	st.InitDownloadStatus()
-	go st.downloadProgressContinuous(&wgProgressReport)
-
-	// wait for downloads to complete
-	wgDownload.Wait()
-	close(jobsDbUpdate)
-
-	// wait for database updates to complete
-	wgDb.Wait()
-
-	// wait for progress report thread
-	wgProgressReport.Wait()
-
-	// completed all downloads
-	PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
-	PrintLogAndOut("Download completed successfully.\n")
-	PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
+	panic(fmt.Sprintf("download did not converge after %d rounds", maxRounds))
 }
 
 // UpdateDBPart.
@@ -976,6 +1669,12 @@ func (st *State) updateDBPart(txn *sql.Tx, p DBPart, tsNanoSec int64) {
 		_, err := txn.Exec(fmt.Sprintf(
 			"UPDATE manifest_regular_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d'",
 			reg.Size, tsNanoSec, reg.FileId, reg.PartId))
+		check(err)
+	case DBPartRegularChunk:
+		chunk := p.(DBPartRegularChunk)
+		_, err := txn.Exec(fmt.Sprintf(
+			"UPDATE manifest_regular_chunk_stats SET bytes_fetched = %d, download_done_time = %d WHERE file_id = '%s' AND part_id = '%d' AND chunk_id = '%d'",
+			chunk.Size, tsNanoSec, chunk.FileId, chunk.PartId, chunk.ChunkId))
 		check(err)
 
 	case DBPartSymlink:
@@ -998,7 +1697,7 @@ func (st *State) resetDBPart(p DBPartRegular) {
 	defer tx.Commit()
 
 	_, err = tx.Exec(fmt.Sprintf(
-		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s' AND part_id = '%d'",
+		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0, integrity_done = 0 WHERE file_id = '%s' AND part_id = '%d'",
 		p.FileId, p.PartId))
 	check(err)
 }
@@ -1024,7 +1723,12 @@ func (st *State) resetRegularFile(p DBPartRegular) {
 	defer tx.Commit()
 
 	_, err = tx.Exec(fmt.Sprintf(
-		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
+		"UPDATE manifest_regular_stats SET bytes_fetched = 0, download_done_time = 0, integrity_done = 0 WHERE file_id = '%s'",
+		p.FileId))
+	check(err)
+
+	_, err = tx.Exec(fmt.Sprintf(
+		"UPDATE manifest_regular_chunk_stats SET bytes_fetched = 0, download_done_time = 0 WHERE file_id = '%s'",
 		p.FileId))
 	check(err)
 }
@@ -1203,13 +1907,13 @@ func (st *State) checkAllRegularFileIntegrity() bool {
 	integrityMsgs := make(chan string, cnt)
 	var wg sync.WaitGroup
 
-	rows, err := st.db.Query("SELECT * FROM manifest_regular_stats WHERE bytes_fetched == size")
+	rows, err := st.db.Query("SELECT file_id, project, name, folder, part_id, offset, size, md5, bytes_fetched, download_done_time, checksum_type, checksum, split_mode, integrity_done FROM manifest_regular_stats WHERE bytes_fetched == size")
 	check(err)
 
 	for rows.Next() {
 		var p DBPartRegular
 		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum)
+			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum, &p.SplitMode, &p.IntegrityDone)
 		check(err)
 		j := JobInfo{
 			part: p,
