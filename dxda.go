@@ -161,6 +161,10 @@ type State struct {
 	chunkInFlight   map[string]int
 	chunkMaxInFlight map[string]int
 	chunkWorkers    map[string]map[int]struct{}
+	chunkFinalizeMu sync.Mutex
+	chunkFinalizeRetries map[string]int
+	chunkFinalizeFatalErr error
+	maxChunkFinalizeRetries int
 	db              *sql.DB
 	ds              *DownloadStatus // only the progress report thread accesses this field
 	timeOfLastError int
@@ -296,6 +300,10 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 		chunkInFlight:   make(map[string]int),
 		chunkMaxInFlight: make(map[string]int),
 		chunkWorkers:    make(map[string]map[int]struct{}),
+		chunkFinalizeMu: sync.Mutex{},
+		chunkFinalizeRetries: make(map[string]int),
+		chunkFinalizeFatalErr: nil,
+		maxChunkFinalizeRetries: 2,
 		db:              db,
 		ds:              nil,
 		timeOfLastError: 0,
@@ -370,6 +378,44 @@ func (st *State) readRegularChunkStats(fileId string, partId int) (int, int) {
 	maxInFlight := st.chunkMaxInFlight[key]
 	workers := len(st.chunkWorkers[key])
 	return maxInFlight, workers
+}
+
+func (st *State) bumpChunkFinalizeRetry(fileId string, partId int) int {
+	key := regularPartKey(fileId, partId)
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	st.chunkFinalizeRetries[key] += 1
+	return st.chunkFinalizeRetries[key]
+}
+
+func (st *State) clearChunkFinalizeRetry(fileId string, partId int) {
+	key := regularPartKey(fileId, partId)
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	delete(st.chunkFinalizeRetries, key)
+}
+
+func (st *State) setChunkFinalizeFatalErr(err error) {
+	if err == nil {
+		return
+	}
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	if st.chunkFinalizeFatalErr == nil {
+		st.chunkFinalizeFatalErr = err
+	}
+}
+
+func (st *State) clearChunkFinalizeFatalErr() {
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	st.chunkFinalizeFatalErr = nil
+}
+
+func (st *State) getChunkFinalizeFatalErr() error {
+	st.chunkFinalizeMu.Lock()
+	defer st.chunkFinalizeMu.Unlock()
+	return st.chunkFinalizeFatalErr
 }
 
 // Returns an error if the schema is outdated and requires recreation.
@@ -942,7 +988,7 @@ func (st *State) DownloadProgressOneTime(timeWindowNanoSec int64) string {
 }
 
 // A loop that reports on download progress periodically.
-func (st *State) downloadProgressContinuous(wg *sync.WaitGroup) {
+func (st *State) downloadProgressContinuous(stop <-chan struct{}, wg *sync.WaitGroup) {
 	// Start time of the measurements, in nano seconds
 	startTime := time.Now()
 	lastReportTs := startTime
@@ -950,10 +996,25 @@ func (st *State) downloadProgressContinuous(wg *sync.WaitGroup) {
 	// only the progress-report thread has access to the "ds" state
 	// field. That is why no locking is required here.
 	for true {
+		select {
+		case <-stop:
+			wg.Done()
+			return
+		default:
+		}
+
 		// Sleep for a number of seconds, so as to not flood the screen
 		// with messages. This also substantially limits the number
 		// of database queries.
 		time.Sleep(1 * time.Second)
+
+		select {
+		case <-stop:
+			wg.Done()
+			returngit a
+		default:
+		}
+
 		if st.ds.NumPartsComplete >= st.ds.NumParts {
 			// signal that the thread is done
 			wg.Done()
@@ -1311,7 +1372,7 @@ func (st *State) resetChunkedPartState(fileId string, partId int) {
 	check(err)
 }
 
-func (st *State) maybeFinalizeChunkedRegularPart(fileId string, partId int, tsNanoSec int64) {
+func (st *State) maybeFinalizeChunkedRegularPart(fileId string, partId int, tsNanoSec int64) error {
 	var p DBPartRegular
 	st.mutex.Lock()
 	err := st.db.QueryRow(
@@ -1324,11 +1385,11 @@ func (st *State) maybeFinalizeChunkedRegularPart(fileId string, partId int, tsNa
 	)
 	if err != nil {
 		st.mutex.Unlock()
-		return
+		return err
 	}
 	if p.SplitMode != splitModeChunked || p.IntegrityDone == 1 {
 		st.mutex.Unlock()
-		return
+		return nil
 	}
 
 	var completedBytes int64
@@ -1338,20 +1399,25 @@ func (st *State) maybeFinalizeChunkedRegularPart(fileId string, partId int, tsNa
 	).Scan(&completedBytes)
 	st.mutex.Unlock()
 	if err != nil {
-		return
+		return err
 	}
 
 	if completedBytes < int64(p.Size) {
-		return
+		return nil
 	}
 
 	if err := st.checkRegularPartIntegrityNoReset(p); err != nil {
-		log.Printf("Chunked regular part failed integrity (%s part %d): %s", p.FileId, p.PartId, err.Error())
+		attempt := st.bumpChunkFinalizeRetry(fileId, partId)
+		log.Printf("Chunked regular part failed integrity (%s part %d, attempt %d/%d): %s", p.FileId, p.PartId, attempt, st.maxChunkFinalizeRetries, err.Error())
+		if attempt >= st.maxChunkFinalizeRetries {
+			return fmt.Errorf("chunked regular part finalize failed after %d attempts (%s part %d): %w", attempt, p.FileId, p.PartId, err)
+		}
 		st.resetChunkedPartState(fileId, partId)
-		return
+		return nil
 	}
 
 	st.markChunkedPartComplete(fileId, partId, tsNanoSec)
+	st.clearChunkFinalizeRetry(fileId, partId)
 
 	maxInFlight, workerCount := st.readRegularChunkStats(fileId, partId)
 	log.Printf(
@@ -1361,6 +1427,8 @@ func (st *State) maybeFinalizeChunkedRegularPart(fileId string, partId int, tsNa
 		maxInFlight,
 		workerCount,
 	)
+
+	return nil
 }
 
 func (st *State) dbApplyBulkUpdates(completedJobs []JobInfo) {
@@ -1391,7 +1459,10 @@ func (st *State) dbApplyBulkUpdates(completedJobs []JobInfo) {
 
 	now := time.Now().UnixNano()
 	for _, chunk := range chunkedPartsToFinalize {
-		st.maybeFinalizeChunkedRegularPart(chunk.FileId, chunk.PartId, now)
+		if err := st.maybeFinalizeChunkedRegularPart(chunk.FileId, chunk.PartId, now); err != nil {
+			st.setChunkFinalizeFatalErr(err)
+			return
+		}
 	}
 }
 
@@ -1411,118 +1482,192 @@ func (st *State) dbUpdateWorker(jobsDbUpdate <-chan JobInfo, wg *sync.WaitGroup)
 	wg.Done()
 }
 
+func (st *State) reconcileChunkedRegularParents() error {
+	rows, err := st.db.Query("SELECT file_id, part_id FROM manifest_regular_stats WHERE split_mode = ? AND integrity_done = 0", splitModeChunked)
+	if err != nil {
+		return err
+	}
+
+	type parentPart struct {
+		fileId string
+		partId int
+	}
+
+	var pending []parentPart
+	for rows.Next() {
+		var fileId string
+		var partId int
+		if err := rows.Scan(&fileId, &partId); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, parentPart{fileId: fileId, partId: partId})
+	}
+
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	now := time.Now().UnixNano()
+	for _, p := range pending {
+		if err := st.maybeFinalizeChunkedRegularPart(p.fileId, p.partId, now); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (st *State) countIncompleteJobs() int64 {
+	cntReg := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE split_mode = 'part_row' AND bytes_fetched != size")
+	cntRegChunked := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE bytes_fetched != size")
+	cntSlnk := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched != size")
+	return cntReg + cntRegChunked + cntSlnk
+}
+
 // Download all the files that are mentioned in the manifest.
 func (st *State) DownloadManifestDB(fname string) {
 	if st.opts.Verbose {
 		log.Printf("DownloadManifestDB %s\n", fname)
 	}
 	st.timeOfLastError = time.Now().Second()
+	st.clearChunkFinalizeFatalErr()
 
-	// build a job-channel that will hold all the parts. If we make it too small,
-	// we will block before creating the worker threads.
-	cntReg := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_stats WHERE split_mode = 'part_row' AND bytes_fetched != size")
-	cntRegChunked := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE bytes_fetched != size")
-	cntSlnk := st.queryDBIntegerResult("SELECT COUNT(*) FROM manifest_symlink_stats WHERE bytes_fetched != size")
-	totNumJobs := cntReg + cntRegChunked + cntSlnk
-	jobs := make(chan JobInfo, totNumJobs)
+	// Keep retries bounded while still allowing recovery from transient mismatch.
+	maxRounds := st.maxChunkFinalizeRetries + 2
 
-	// create a job for each incomplete data file part
-	rows, err := st.db.Query(
-		"SELECT file_id, project, name, folder, part_id, offset, size, md5, bytes_fetched, download_done_time, checksum_type, checksum, split_mode, integrity_done FROM manifest_regular_stats WHERE split_mode = ? AND bytes_fetched != size",
-		splitModePartRow,
-	)
-	check(err)
-
-	numRows := 0
-	for rows.Next() {
-		var p DBPartRegular
-		err := rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum, &p.SplitMode, &p.IntegrityDone)
-		check(err)
-		j := JobInfo{
-			part: p,
-			url:  nil,
+	for round := 1; round <= maxRounds; round++ {
+		if err := st.reconcileChunkedRegularParents(); err != nil {
+			panic(err)
 		}
-		jobs <- j
-		numRows++
-	}
-	rows.Close()
-	if st.opts.Verbose {
-		log.Printf("There are %d regular file pieces\n", numRows)
-	}
 
-	rows, err = st.db.Query("SELECT file_id, project, name, folder, part_id, chunk_id, offset, size, bytes_fetched, download_done_time FROM manifest_regular_chunk_stats WHERE bytes_fetched != size")
-	check(err)
-	for rows.Next() {
-		var p DBPartRegularChunk
-		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.ChunkId, &p.Offset,
-			&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
-		check(err)
-		j := JobInfo{
-			part: p,
-			url:  nil,
+		if fatal := st.getChunkFinalizeFatalErr(); fatal != nil {
+			panic(fatal)
 		}
-		jobs <- j
-	}
-	rows.Close()
 
-	// create a job for each imcomplete data symlink part
-	rows, err = st.db.Query("SELECT * FROM manifest_symlink_stats WHERE bytes_fetched != size")
-	check(err)
-
-	for rows.Next() {
-		var p DBPartSymlink
-		err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
-			&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
-		check(err)
-		j := JobInfo{
-			part: p,
-			url:  nil,
+		totNumJobs := st.countIncompleteJobs()
+		if totNumJobs == 0 {
+			// One last reconcile catches the case where parent finalization becomes
+			// possible exactly after worker completion in the previous round.
+			if err := st.reconcileChunkedRegularParents(); err != nil {
+				panic(err)
+			}
+			if fatal := st.getChunkFinalizeFatalErr(); fatal != nil {
+				panic(fatal)
+			}
+			if st.countIncompleteJobs() == 0 {
+				PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
+				PrintLogAndOut("Download completed successfully.\n")
+				PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
+				return
+			}
 		}
-		jobs <- j
+
+		jobs := make(chan JobInfo, totNumJobs)
+
+		// create a job for each incomplete data file part
+		rows, err := st.db.Query(
+			"SELECT file_id, project, name, folder, part_id, offset, size, md5, bytes_fetched, download_done_time, checksum_type, checksum, split_mode, integrity_done FROM manifest_regular_stats WHERE split_mode = ? AND bytes_fetched != size",
+			splitModePartRow,
+		)
+		check(err)
+
+		numRows := 0
+		for rows.Next() {
+			var p DBPartRegular
+			err := rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
+				&p.Size, &p.MD5, &p.BytesFetched, &p.DownloadDoneTime, &p.ChecksumType, &p.Checksum, &p.SplitMode, &p.IntegrityDone)
+			check(err)
+			j := JobInfo{
+				part: p,
+				url:  nil,
+			}
+			jobs <- j
+			numRows++
+		}
+		rows.Close()
+		if st.opts.Verbose {
+			log.Printf("There are %d regular file pieces\n", numRows)
+		}
+
+		rows, err = st.db.Query("SELECT file_id, project, name, folder, part_id, chunk_id, offset, size, bytes_fetched, download_done_time FROM manifest_regular_chunk_stats WHERE bytes_fetched != size")
+		check(err)
+		for rows.Next() {
+			var p DBPartRegularChunk
+			err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.ChunkId, &p.Offset,
+				&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
+			check(err)
+			j := JobInfo{
+				part: p,
+				url:  nil,
+			}
+			jobs <- j
+		}
+		rows.Close()
+
+		// create a job for each imcomplete data symlink part
+		rows, err = st.db.Query("SELECT * FROM manifest_symlink_stats WHERE bytes_fetched != size")
+		check(err)
+
+		for rows.Next() {
+			var p DBPartSymlink
+			err = rows.Scan(&p.FileId, &p.Project, &p.FileName, &p.Folder, &p.PartId, &p.Offset,
+				&p.Size, &p.BytesFetched, &p.DownloadDoneTime)
+			check(err)
+			j := JobInfo{
+				part: p,
+				url:  nil,
+			}
+			jobs <- j
+		}
+		rows.Close()
+
+		// Close the job channel, there will be no more jobs.
+		close(jobs)
+
+		// the preauth thread adds a valid URL to each job.
+		jobsWithUrls := make(chan JobInfo, totNumJobs)
+		go st.preauthUrlsWorker(jobs, jobsWithUrls, &st.dxEnv)
+
+		// the db-update thread updates the database when jobs
+		// complete.
+		var wgDb sync.WaitGroup
+		jobsDbUpdate := make(chan JobInfo, totNumJobs)
+		wgDb.Add(1)
+		go st.dbUpdateWorker(jobsDbUpdate, &wgDb)
+
+		// start concurrent workers to download the file parts
+		var wgDownload sync.WaitGroup
+		for w := 1; w <= st.opts.NumThreads; w++ {
+			wgDownload.Add(1)
+			go st.worker(w, jobsWithUrls, jobsDbUpdate, &wgDownload)
+		}
+
+		var wgProgressReport sync.WaitGroup
+		progressStop := make(chan struct{})
+		wgProgressReport.Add(1)
+		st.InitDownloadStatus()
+		go st.downloadProgressContinuous(progressStop, &wgProgressReport)
+
+		// wait for downloads to complete
+		wgDownload.Wait()
+		close(jobsDbUpdate)
+
+		// wait for database updates to complete
+		wgDb.Wait()
+
+		close(progressStop)
+		// wait for progress report thread
+		wgProgressReport.Wait()
+
+		if fatal := st.getChunkFinalizeFatalErr(); fatal != nil {
+			panic(fatal)
+		}
 	}
-	rows.Close()
 
-	// Close the job channel, there will be no more jobs.
-	close(jobs)
-
-	// the preauth thread adds a valid URL to each job.
-	jobsWithUrls := make(chan JobInfo, totNumJobs)
-	go st.preauthUrlsWorker(jobs, jobsWithUrls, &st.dxEnv)
-
-	// the db-update thread updates the database when jobs
-	// complete.
-	var wgDb sync.WaitGroup
-	jobsDbUpdate := make(chan JobInfo, totNumJobs)
-	wgDb.Add(1)
-	go st.dbUpdateWorker(jobsDbUpdate, &wgDb)
-
-	// start concurrent workers to download the file parts
-	var wgDownload sync.WaitGroup
-	for w := 1; w <= st.opts.NumThreads; w++ {
-		wgDownload.Add(1)
-		go st.worker(w, jobsWithUrls, jobsDbUpdate, &wgDownload)
-	}
-
-	var wgProgressReport sync.WaitGroup
-	wgProgressReport.Add(1)
-	st.InitDownloadStatus()
-	go st.downloadProgressContinuous(&wgProgressReport)
-
-	// wait for downloads to complete
-	wgDownload.Wait()
-	close(jobsDbUpdate)
-
-	// wait for database updates to complete
-	wgDb.Wait()
-
-	// wait for progress report thread
-	wgProgressReport.Wait()
-
-	// completed all downloads
-	PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
-	PrintLogAndOut("Download completed successfully.\n")
-	PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
+	panic(fmt.Sprintf("download did not converge after %d rounds", maxRounds))
 }
 
 // UpdateDBPart.

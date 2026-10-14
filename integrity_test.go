@@ -789,3 +789,125 @@ func TestResolveMaxInflightChunksPerFile(t *testing.T) {
 		t.Fatalf("Expected invalid env to fall back to auto cap 10, got %d", got)
 	}
 }
+
+func TestReconcileChunkedRegularParentsFinalizesCompletedParent(t *testing.T) {
+	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
+	t.Cleanup(func() {
+		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
+	})
+
+	st := newTestState(t)
+	st.maxChunkSize = 8
+	st.regularPartSplitThreshold = 1
+
+	content := bytes.Repeat([]byte("A"), 40)
+	sum := md5.Sum(content)
+	expectedMD5 := hex.EncodeToString(sum[:])
+
+	reg := DXFileRegular{
+		Folder: testFolder,
+		Id:     "file-resume-finalize-0001",
+		ProjId: "project-0001",
+		Name:   "resume-finalize.bin",
+		Parts: []DXPart{
+			{Id: 1, Size: len(content), MD5: expectedMD5},
+		},
+	}
+
+	writePartFile(t, reg.Name, content)
+
+	txn, err := st.db.Begin()
+	if err != nil {
+		t.Fatalf("Could not begin transaction: %s", err)
+	}
+	st.addRegularFileToTable(txn, reg)
+	if err := txn.Commit(); err != nil {
+		t.Fatalf("Could not commit transaction: %s", err)
+	}
+
+	if _, err := st.db.Exec(
+		"UPDATE manifest_regular_chunk_stats SET bytes_fetched = size, download_done_time = 1 WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	); err != nil {
+		t.Fatalf("Could not mark chunk rows complete: %s", err)
+	}
+
+	if err := st.reconcileChunkedRegularParents(); err != nil {
+		t.Fatalf("Could not reconcile chunked parents: %s", err)
+	}
+
+	var parentBytes int
+	var integrityDone int
+	if err := st.db.QueryRow(
+		"SELECT bytes_fetched, integrity_done FROM manifest_regular_stats WHERE file_id = ? AND part_id = 1",
+		reg.Id,
+	).Scan(&parentBytes, &integrityDone); err != nil {
+		t.Fatalf("Could not read parent row state: %s", err)
+	}
+
+	if parentBytes != len(content) || integrityDone != 1 {
+		t.Fatalf("Expected reconciler to finalize parent, got bytes_fetched=%d integrity_done=%d", parentBytes, integrityDone)
+	}
+}
+
+func TestChunkedFinalizeReturnsTerminalErrorAfterRetryBudget(t *testing.T) {
+	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
+	t.Cleanup(func() {
+		os.Unsetenv("DXDA_ENABLE_REGULAR_PART_CHUNKING")
+	})
+
+	st := newTestState(t)
+	st.maxChunkSize = 8
+	st.regularPartSplitThreshold = 1
+	st.maxChunkFinalizeRetries = 2
+
+	goodContent := bytes.Repeat([]byte("A"), 40)
+	corruptContent := bytes.Repeat([]byte("B"), 40)
+	sum := md5.Sum(goodContent)
+	expectedMD5 := hex.EncodeToString(sum[:])
+
+	reg := DXFileRegular{
+		Folder: testFolder,
+		Id:     "file-finalize-budget-0001",
+		ProjId: "project-0001",
+		Name:   "finalize-budget.bin",
+		Parts: []DXPart{
+			{Id: 1, Size: len(goodContent), MD5: expectedMD5},
+		},
+	}
+
+	writePartFile(t, reg.Name, corruptContent)
+
+	txn, err := st.db.Begin()
+	if err != nil {
+		t.Fatalf("Could not begin transaction: %s", err)
+	}
+	st.addRegularFileToTable(txn, reg)
+	if err := txn.Commit(); err != nil {
+		t.Fatalf("Could not commit transaction: %s", err)
+	}
+
+	markChunkRowsComplete := func() {
+		if _, err := st.db.Exec(
+			"UPDATE manifest_regular_chunk_stats SET bytes_fetched = size, download_done_time = 1 WHERE file_id = ? AND part_id = 1",
+			reg.Id,
+		); err != nil {
+			t.Fatalf("Could not mark chunk rows complete: %s", err)
+		}
+	}
+
+	markChunkRowsComplete()
+	if err := st.maybeFinalizeChunkedRegularPart(reg.Id, 1, 1); err != nil {
+		t.Fatalf("Expected first finalize failure to reset and continue, got %v", err)
+	}
+
+	markChunkRowsComplete()
+	err = st.maybeFinalizeChunkedRegularPart(reg.Id, 1, 2)
+	if err == nil {
+		t.Fatalf("Expected terminal finalize error after retry budget is exhausted")
+	}
+
+	if !strings.Contains(err.Error(), "finalize failed") {
+		t.Fatalf("Expected terminal error to mention finalize failure, got %v", err)
+	}
+}

@@ -25,8 +25,10 @@ This document explains the current DXDA download flow end to end, including:
     - `symlinks`: one row per symlink object for whole file metadata
 6. URL workers prepare pre-authenticated download URLs.
 7. Download workers convert each planned part or chunk row (`offset`, `size`) into a byte range (`Range: bytes=start-end`), then issue HTTP `GET` and write to local offsets.
-8. For chunked regular parts, DXDA finalizes at part level only after all chunk rows complete and integrity passes.
-9. Progress and resume state are updated in SQLite.
+8. At the start of each round, DXDA reconciles chunked parents that are pending finalize (`integrity_done = 0`).
+9. For chunked regular parts, DXDA finalizes at part level only after all chunk rows complete and integrity passes.
+10. On chunked finalize mismatch, DXDA resets parent and child chunk rows and retries in the next round, up to a bounded retry budget.
+11. Progress and resume state are updated in SQLite.
 
 ## Manifest Input Format
 
@@ -125,12 +127,16 @@ flowchart TD
     W1 --> Q1[Queue jobsWithUrls]
     Q1 --> W2
 
+    S13 --> R1[Step 8A Reconcile chunked parents with integrity_done 0]
+    R1 --> S14
+
     W2 --> S14[Step 11 Download ranged bytes and write to file offsets]
     S14 --> S15[Step 12 Update bytes_fetched and completion time in SQLite]
     S15 --> S16{Chunked regular part all chunk rows complete}
     S16 -->|Yes| S17[Run part-level integrity check on local bytes]
     S17 -->|Pass| S18[Mark parent regular part complete and integrity_done 1]
-    S17 -->|Fail| S19[Reset parent row and all chunk rows for retry]
+    S17 -->|Fail and retry budget remains| S19[Reset parent row and all chunk rows for next round]
+    S17 -->|Fail and retry budget exhausted| S21[Return terminal error]
     S16 -->|No| S20[Continue]
 ```
 
@@ -227,7 +233,11 @@ This zooms into Step 9 through Step 12.
 
 ```mermaid
 flowchart TD
-    A[Load incomplete rows from SQLite] --> B{Classify DB job type}
+    A[Round starts] --> A1[Reconcile chunked parents with integrity_done 0]
+    A1 --> A2{Any terminal finalize error}
+    A2 -->|Yes| A3[Stop with explicit failure]
+    A2 -->|No| A4[Load incomplete rows from SQLite]
+    A4 --> B{Classify DB job type}
 
     B -->|DBPartRegular| R1[Prepare URL for regular job]
     B -->|DBPartRegularChunk| C1[Prepare URL for regular chunk job]
@@ -262,8 +272,15 @@ flowchart TD
     F -->|Yes| G[Check whether all chunk rows for part are complete]
     G -->|All complete| H[Run part-level integrity]
     H -->|Pass| I[Mark parent part complete and set integrity_done]
-    H -->|Fail| J[Reset parent row and all chunk rows]
+    H -->|Fail and retry budget remains| J[Reset parent row and all chunk rows for next round]
+    H -->|Fail and retry budget exhausted| L[Set terminal finalize error]
     F -->|No| K[Done]
+
+    K --> M{Any incomplete rows remain}
+    I --> M
+    J --> M
+    M -->|Yes| A
+    M -->|No| N[Success]
 ```
 
 ## Sequence Diagram
@@ -310,6 +327,16 @@ sequenceDiagram
         CLI->>DB: Validate schema and reuse existing progress rows
     end
 
+    loop For each round until convergence
+        CLI->>DB: Reconcile chunked parents with integrity_done=0
+        alt Reconcile/finalize terminal failure
+            CLI->>CLI: Exit with explicit error
+        else Continue
+            CLI->>DB: Query incomplete regular part_row rows
+            CLI->>DB: Query incomplete regular chunk rows
+            CLI->>DB: Query incomplete symlink rows
+        end
+
     loop For each incomplete row
         alt Regular in DX job with DX_DXDA_DOWNLOAD_URI
             CLI->>CLI: Build URL locally from environment variables
@@ -332,14 +359,17 @@ sequenceDiagram
             CLI->>CLI: When all chunk rows for part are complete, run part-level integrity
             alt Integrity pass
                 CLI->>DB: Mark parent regular part complete and integrity_done=1
-            else Integrity fail
-                CLI->>DB: Reset parent row and all chunk rows for retry
+            else Integrity fail and retry budget remains
+                CLI->>DB: Reset parent row and all chunk rows for next round
+            else Integrity fail and retry budget exhausted
+                CLI->>CLI: Return terminal error
             end
         end
         opt Symlink chunk row
             CLI->>CLI: One DB row is one pre-split chunk range
         end
         CLI->>DB: Update bytes_fetched and download_done_time
+    end
     end
 ```
 
@@ -350,8 +380,8 @@ sequenceDiagram
     - It is handled as part-based download and inserted into `manifest_regular_stats`.
 
 2. Large regular part behavior:
-    - If chunking is disabled, or part size does not cross the split threshold, it stays `split_mode = part_row`.
-    - If chunking is enabled and part size crosses the threshold, it becomes `split_mode = chunked` and gets persisted chunk rows in `manifest_regular_chunk_stats`.
+    - If chunking is disabled, it stays `split_mode = part_row`.
+    - If chunking is enabled and part size is larger than `maxChunkSize`, it becomes `split_mode = chunked` and gets persisted chunk rows in `manifest_regular_chunk_stats`.
 
 3. Symlink without `parts`:
     - DXDA pre-splits it into multiple rows in `manifest_symlink_stats`.
@@ -360,11 +390,13 @@ sequenceDiagram
 4. Resume after interruption:
     - DXDA reloads incomplete rows from SQLite.
     - It resumes from `bytes_fetched` and updates `download_done_time` on completion.
-    - For chunked regular parts, parent completion is derived after all chunk rows finish and finalize integrity passes.
+    - For chunked regular parts, startup reconcile finalizes parents that already have all chunk rows complete.
+    - Parent completion is derived after all chunk rows finish and finalize integrity passes.
 
 5. Different integrity checks by phase and type:
     - Download phase (regular): validates part MD5 when MD5 is present.
-    - Download phase (chunked regular): validates full part after all chunk rows complete; on failure, parent and chunk rows are reset.
+    - Download phase (chunked regular): validates full part after all chunk rows complete; on failure, parent and chunk rows are reset while retry budget remains, then retried in the next round.
+    - If chunked finalize mismatch persists until retry budget is exhausted, DXDA returns a terminal error.
     - Inspect phase (regular): validates MD5 or checksumType/checksum metadata.
     - Inspect phase (symlink): validates whole-file MD5 from `symlinks`.
 
