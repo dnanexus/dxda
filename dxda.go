@@ -1535,8 +1535,8 @@ func (st *State) DownloadManifestDB(fname string) {
 	st.timeOfLastError = time.Now().Second()
 	st.clearChunkFinalizeFatalErr()
 
-	// Keep retries bounded while still allowing recovery from transient mismatch.
-	maxRounds := st.maxChunkFinalizeRetries + 2
+	// The extra round lets the top-of-loop reconcile finalize parts completed in the last download round.
+	maxRounds := st.maxChunkFinalizeRetries + 3
 
 	for round := 1; round <= maxRounds; round++ {
 		if err := st.reconcileChunkedRegularParents(); err != nil {
@@ -1549,20 +1549,11 @@ func (st *State) DownloadManifestDB(fname string) {
 
 		totNumJobs := st.countIncompleteJobs()
 		if totNumJobs == 0 {
-			// One last reconcile catches the case where parent finalization becomes
-			// possible exactly after worker completion in the previous round.
-			if err := st.reconcileChunkedRegularParents(); err != nil {
-				panic(err)
-			}
-			if fatal := st.getChunkFinalizeFatalErr(); fatal != nil {
-				panic(fatal)
-			}
-			if st.countIncompleteJobs() == 0 {
-				PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
-				PrintLogAndOut("Download completed successfully.\n")
-				PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
-				return
-			}
+			st.InitDownloadStatus() // ds is nil until initialized
+			PrintLogAndOut(st.DownloadProgressOneTime(60*1000*1000*1000) + "\n")
+			PrintLogAndOut("Download completed successfully.\n")
+			PrintLogAndOut("To perform additional post-download integrity checks, please use the 'inspect' subcommand.\n")
+			return
 		}
 
 		jobs := make(chan JobInfo, totNumJobs)

@@ -850,6 +850,13 @@ func TestReconcileChunkedRegularParentsFinalizesCompletedParent(t *testing.T) {
 	}
 }
 
+func TestDownloadManifestDBNoIncompleteJobs(t *testing.T) {
+	st := newTestState(t)
+
+	// Empty manifest: nothing to download must complete without panicking.
+	st.DownloadManifestDB("manifest.json.bz2")
+}
+
 func TestChunkedFinalizeReturnsTerminalErrorAfterRetryBudget(t *testing.T) {
 	os.Setenv("DXDA_ENABLE_REGULAR_PART_CHUNKING", "1")
 	t.Cleanup(func() {
