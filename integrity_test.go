@@ -518,16 +518,17 @@ func TestAddRegularFileToTableChunkedWhenEnabled(t *testing.T) {
 	})
 
 	st := newTestState(t)
-	st.regularPartSplitThreshold = 1
+	st.maxChunkSize = 8
+	st.regularPartSplitThreshold = st.maxChunkSize
 
-	bigPart := 20 * MiB
+	bigPart := 2*int(st.maxChunkSize) + 3
 	reg := DXFileRegular{
 		Folder: testFolder,
 		Id:     "file-big-0001",
 		ProjId: "project-0001",
 		Name:   "big.bin",
 		Parts: []DXPart{
-			{Id: 1, Size: bigPart, MD5: testPartMD5},
+			{Id: 1, Size: bigPart},
 		},
 	}
 
@@ -551,15 +552,44 @@ func TestAddRegularFileToTableChunkedWhenEnabled(t *testing.T) {
 		t.Fatalf("Expected split mode %q, got %q", splitModeChunked, splitMode)
 	}
 
-	var numChunks int
-	if err := st.db.QueryRow(
-		"SELECT COUNT(*) FROM manifest_regular_chunk_stats WHERE file_id = ? AND part_id = 1",
+	rows, err := st.db.Query(
+		"SELECT offset, size FROM manifest_regular_chunk_stats WHERE file_id = ? AND part_id = 1 ORDER BY chunk_id",
 		reg.Id,
-	).Scan(&numChunks); err != nil {
-		t.Fatalf("Could not count chunk rows: %s", err)
+	)
+	if err != nil {
+		t.Fatalf("Could not query chunk rows: %s", err)
 	}
-	if numChunks < 2 {
-		t.Fatalf("Expected at least 2 chunk rows for large part, got %d", numChunks)
+	defer rows.Close()
+	wantOffsets := []int64{0, 8, 16}
+	wantSizes := []int64{8, 8, 3}
+	var chunkIndex int
+	var totalSize int64
+	for rows.Next() {
+		if chunkIndex >= len(wantOffsets) {
+			t.Fatalf("Expected exactly %d chunks, found more", len(wantOffsets))
+		}
+		var offset, size int64
+		if err := rows.Scan(&offset, &size); err != nil {
+			t.Fatalf("Could not scan chunk row: %s", err)
+		}
+		if offset != wantOffsets[chunkIndex] || size != wantSizes[chunkIndex] {
+			t.Fatalf("Chunk %d: got offset=%d size=%d, want offset=%d size=%d",
+				chunkIndex+1, offset, size, wantOffsets[chunkIndex], wantSizes[chunkIndex])
+		}
+		if chunkIndex > 0 && offset != wantOffsets[chunkIndex-1]+wantSizes[chunkIndex-1] {
+			t.Fatalf("Chunk %d starts at %d, leaving a gap or overlap", chunkIndex+1, offset)
+		}
+		totalSize += size
+		chunkIndex++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error iterating chunk rows: %s", err)
+	}
+	if chunkIndex != len(wantOffsets) {
+		t.Fatalf("Expected %d chunks, got %d", len(wantOffsets), chunkIndex)
+	}
+	if totalSize != int64(bigPart) {
+		t.Fatalf("Chunk sizes total %d, want parent size %d", totalSize, bigPart)
 	}
 }
 
