@@ -169,24 +169,33 @@ type State struct {
 	ds              *DownloadStatus // only the progress report thread accesses this field
 	timeOfLastError int
 	maxChunkSize    int64
-	enableRegularPartChunking bool
+	regularPartChunking       regularChunkingMode
 	regularPartSplitThreshold int64
 	maxInflightChunksPerFile int
 }
 
-func parseBoolEnvDefaultTrue(v string) bool {
+type regularChunkingMode int
+
+const (
+	// Default: multi-part files keep the user's part layout; only a single-part file is chunked.
+	chunkSinglePartOnly regularChunkingMode = iota
+	chunkAllParts
+	chunkOff
+)
+
+func parseRegularChunkingMode(v string) regularChunkingMode {
 	switch v {
-	case "", "1", "true", "TRUE", "True", "yes", "YES", "on", "ON":
-		return true
+	case "1", "true", "TRUE", "True", "yes", "YES", "on", "ON":
+		return chunkAllParts
 	case "0", "false", "FALSE", "False", "no", "NO", "off", "OFF":
-		return false
+		return chunkOff
 	default:
-		return true
+		return chunkSinglePartOnly
 	}
 }
 
-func resolveMaxInflightChunksPerFile(rawCap string, numCPUs int, numThreads int) int {
-	autoCap := MinInt(16, numCPUs)
+func resolveMaxInflightChunksPerFile(rawCap string, numThreads int) int {
+	autoCap := 16
 	if numThreads > 0 {
 		autoCap = MinInt(autoCap, numThreads)
 	}
@@ -275,12 +284,11 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 		opts.NumThreads = calcNumThreads(maxChunkSize)
 	}
 
-	enableRegularPartChunking := parseBoolEnvDefaultTrue(os.Getenv("DXDA_ENABLE_REGULAR_PART_CHUNKING"))
+	regularPartChunking := parseRegularChunkingMode(os.Getenv("DXDA_ENABLE_REGULAR_PART_CHUNKING"))
 	regularPartSplitThreshold := maxChunkSize
 
 	maxInflightChunksPerFile := resolveMaxInflightChunksPerFile(
 		os.Getenv("DXDA_MAX_INFLIGHT_CHUNKS_PER_FILE"),
-		runtime.NumCPU(),
 		opts.NumThreads,
 	)
 
@@ -308,7 +316,7 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 		ds:              nil,
 		timeOfLastError: 0,
 		maxChunkSize:    maxChunkSize,
-		enableRegularPartChunking: enableRegularPartChunking,
+		regularPartChunking:       regularPartChunking,
 		regularPartSplitThreshold: regularPartSplitThreshold,
 		maxInflightChunksPerFile: maxInflightChunksPerFile,
 	}
@@ -679,7 +687,9 @@ func (st *State) addRegularFileToTable(txn *sql.Tx, f DXFileRegular) {
 	offset := int64(0)
 	for _, p := range f.Parts {
 		splitMode := splitModePartRow
-		if st.enableRegularPartChunking && int64(p.Size) > st.regularPartSplitThreshold {
+		allowChunking := st.regularPartChunking == chunkAllParts ||
+			(st.regularPartChunking == chunkSinglePartOnly && len(f.Parts) == 1)
+		if allowChunking && int64(p.Size) > st.regularPartSplitThreshold {
 			splitMode = splitModeChunked
 		}
 

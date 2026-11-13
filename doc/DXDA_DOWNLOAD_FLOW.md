@@ -379,9 +379,10 @@ sequenceDiagram
     - It does not go through the local symlink chunk-splitting path.
     - It is handled as part-based download and inserted into `manifest_regular_stats`.
 
-2. Large regular part behavior:
-    - If chunking is disabled, it stays `split_mode = part_row`.
-    - If chunking is enabled and part size is larger than `maxChunkSize`, it becomes `split_mode = chunked` and gets persisted chunk rows in `manifest_regular_chunk_stats`.
+2. Large regular part behavior (`DXDA_ENABLE_REGULAR_PART_CHUNKING`):
+    - Unset (default): only a file with a single part larger than `maxChunkSize` is chunked; multi-part files keep the user's part layout (`split_mode = part_row`).
+    - `1`/`true`: every part larger than `maxChunkSize` becomes `split_mode = chunked` with persisted chunk rows in `manifest_regular_chunk_stats`.
+    - `0`/`false`: chunking is off; all parts stay `split_mode = part_row`.
 
 3. Symlink without `parts`:
     - DXDA pre-splits it into multiple rows in `manifest_symlink_stats`.

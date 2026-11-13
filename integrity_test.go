@@ -769,24 +769,24 @@ func TestPerFileInflightChunkCap(t *testing.T) {
 }
 
 func TestResolveMaxInflightChunksPerFile(t *testing.T) {
-	if got := resolveMaxInflightChunksPerFile("", 24, 32); got != 16 {
+	if got := resolveMaxInflightChunksPerFile("", 32); got != 16 {
 		t.Fatalf("Expected auto cap 16 for empty env, got %d", got)
 	}
 
-	if got := resolveMaxInflightChunksPerFile("auto", 12, 8); got != 8 {
+	if got := resolveMaxInflightChunksPerFile("auto", 8); got != 8 {
 		t.Fatalf("Expected auto cap bounded by numThreads (8), got %d", got)
 	}
 
-	if got := resolveMaxInflightChunksPerFile("6", 32, 8); got != 6 {
+	if got := resolveMaxInflightChunksPerFile("6", 8); got != 6 {
 		t.Fatalf("Expected explicit cap 6, got %d", got)
 	}
 
-	if got := resolveMaxInflightChunksPerFile("100", 32, 7); got != 7 {
+	if got := resolveMaxInflightChunksPerFile("100", 7); got != 7 {
 		t.Fatalf("Expected explicit cap bounded by numThreads (7), got %d", got)
 	}
 
-	if got := resolveMaxInflightChunksPerFile("bad", 10, 20); got != 10 {
-		t.Fatalf("Expected invalid env to fall back to auto cap 10, got %d", got)
+	if got := resolveMaxInflightChunksPerFile("bad", 20); got != 16 {
+		t.Fatalf("Expected invalid env to fall back to auto cap 16, got %d", got)
 	}
 }
 
