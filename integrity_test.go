@@ -448,8 +448,8 @@ func TestCreateManifestDBStoresChecksumColumns(t *testing.T) {
 	}
 }
 
-// A database created before newer columns/tables existed should be migrated
-// in-place and accepted.
+// A database created before the newer columns/tables existed must be reported
+// rather than used, since every read of it would fail.
 func TestCheckSchemaVersion(t *testing.T) {
 	st := newTestState(t)
 
@@ -473,41 +473,8 @@ func TestCheckSchemaVersion(t *testing.T) {
 		t.Fatalf("Could not create the old table: %s", err)
 	}
 
-	if err := st.CheckSchemaVersion(); err != nil {
-		t.Fatalf("Expected legacy schema to be auto-migrated, got %v", err)
-	}
-
-	for _, col := range []string{"checksum_type", "checksum", "split_mode", "integrity_done"} {
-		hasCol, err := hasColumn(st.db, "manifest_regular_stats", col)
-		if err != nil {
-			t.Fatalf("Could not inspect column %s: %s", col, err)
-		}
-		if !hasCol {
-			t.Fatalf("Expected migrated column %s to exist", col)
-		}
-	}
-
-	hasChunkTable, err := tableExists(st.db, "manifest_regular_chunk_stats")
-	if err != nil {
-		t.Fatalf("Could not inspect chunk table: %s", err)
-	}
-	if !hasChunkTable {
-		t.Fatalf("Expected chunk table to be created by migration")
-	}
-
-	for _, idx := range []string{
-		"idx_regular_chunk_incomplete",
-		"idx_regular_chunk_file_part",
-		"idx_regular_stats_split_incomplete",
-	} {
-		var count int
-		err := st.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?", idx).Scan(&count)
-		if err != nil {
-			t.Fatalf("Could not inspect index %s: %s", idx, err)
-		}
-		if count != 1 {
-			t.Fatalf("Expected index %s to exist after migration", idx)
-		}
+	if err := st.CheckSchemaVersion(); err == nil {
+		t.Errorf("Expected an outdated schema to be rejected, got nil")
 	}
 }
 
@@ -855,6 +822,29 @@ func TestDownloadManifestDBNoIncompleteJobs(t *testing.T) {
 
 	// Empty manifest: nothing to download must complete without panicking.
 	st.DownloadManifestDB("manifest.json.bz2")
+}
+
+func TestCheckPersistedChunkSizes(t *testing.T) {
+	st := newTestState(t)
+	st.maxChunkSize = 8
+
+	if err := st.checkPersistedChunkSizes(); err != nil {
+		t.Fatalf("Expected an empty database to be accepted, got %v", err)
+	}
+
+	if _, err := st.db.Exec(
+		`INSERT INTO manifest_regular_chunk_stats VALUES ('file-0001', 'project-0001', 'a.bin', '/sub', 1, 1, 0, 16, 0, 0)`,
+	); err != nil {
+		t.Fatalf("Could not insert chunk row: %s", err)
+	}
+	if err := st.checkPersistedChunkSizes(); err == nil {
+		t.Fatalf("Expected a chunk larger than maxChunkSize to be rejected")
+	}
+
+	st.maxChunkSize = 16
+	if err := st.checkPersistedChunkSizes(); err != nil {
+		t.Fatalf("Expected a chunk equal to maxChunkSize to be accepted, got %v", err)
+	}
 }
 
 func TestChunkedFinalizeReturnsTerminalErrorAfterRetryBudget(t *testing.T) {

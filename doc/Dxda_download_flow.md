@@ -111,7 +111,7 @@ flowchart TD
 
     S9 --> S10{Step 7 Materialize SQLite download plan}
     S10 -->|Regular or symlink with parts| S11[Insert manifest_regular_stats one row per platform part]
-    S11 --> S11A{Large regular part and chunking enabled}
+    S11 --> S11A{Part larger than maxChunkSize and chunking mode allows it}
     S11A -->|Yes| S11B[Set split_mode chunked and insert manifest_regular_chunk_stats rows]
     S11A -->|No| S11C[Set split_mode part_row]
 
@@ -315,7 +315,7 @@ sequenceDiagram
         CLI->>DB: CreateManifestDB
         alt Regular or symlink with parts
             CLI->>DB: Insert manifest_regular_stats rows
-            opt Large regular part and chunking enabled
+            opt Part larger than maxChunkSize and chunking mode allows it
                 CLI->>DB: Insert manifest_regular_chunk_stats rows
                 CLI->>DB: Mark parent part split_mode=chunked
             end
@@ -324,9 +324,10 @@ sequenceDiagram
             CLI->>DB: Insert one row in symlinks
         end
     else Stats DB exists
-        CLI->>DB: Validate schema and reuse existing progress rows
+        CLI->>DB: Validate schema (fail if outdated) and reuse existing progress rows
     end
 
+    CLI->>DB: Reject incomplete chunks larger than current maxChunkSize
     loop For each round until convergence
         CLI->>DB: Reconcile chunked parents with integrity_done=0
         alt Reconcile/finalize terminal failure
@@ -400,4 +401,16 @@ sequenceDiagram
     - If chunked finalize mismatch persists until retry budget is exhausted, DXDA returns a terminal error.
     - Inspect phase (regular): validates MD5 or checksumType/checksum metadata.
     - Inspect phase (symlink): validates whole-file MD5 from `symlinks`.
+
+6. Stats database schema policy:
+    - The `.stats.db` file is resume state, not long-lived data, and DXDA does not migrate it.
+    - If the schema is outdated (missing `checksum_type`, `split_mode`, `integrity_done`, or the `manifest_regular_chunk_stats` table), `download` and `inspect` fail with a message asking the user to delete the `.stats.db` file and re-run.
+    - Deleting it discards progress, so an upgrade in the middle of a download means starting that download again.
+
+7. Chunk size on resume:
+    - Chunk rows keep the size they were created with (16 MiB off platform, 64 MiB in a DX job).
+    - If a resumed database holds incomplete chunks larger than the current `maxChunkSize`, DXDA stops with an error asking the user to delete the `.stats.db` file, because workers could not hold such a chunk in memory.
+
+8. Single-part files and extra I/O:
+    - A chunked part is verified by reading the whole part back from disk after all chunks complete, unlike `part_row` parts, which are hashed in memory while downloading.
 

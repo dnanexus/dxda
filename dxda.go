@@ -152,26 +152,26 @@ type DownloadStatus struct {
 }
 
 type State struct {
-	dxEnv           DXEnvironment
-	opts            Opts
-	mutex           sync.Mutex
-	fileChunkSemMu  sync.Mutex
-	fileChunkSem    map[string]chan struct{}
-	chunkStatsMu    sync.Mutex
-	chunkInFlight   map[string]int
-	chunkMaxInFlight map[string]int
-	chunkWorkers    map[string]map[int]struct{}
-	chunkFinalizeMu sync.Mutex
-	chunkFinalizeRetries map[string]int
-	chunkFinalizeFatalErr error
-	maxChunkFinalizeRetries int
-	db              *sql.DB
-	ds              *DownloadStatus // only the progress report thread accesses this field
-	timeOfLastError int
-	maxChunkSize    int64
+	dxEnv                     DXEnvironment
+	opts                      Opts
+	mutex                     sync.Mutex
+	fileChunkSemMu            sync.Mutex
+	fileChunkSem              map[string]chan struct{}
+	chunkStatsMu              sync.Mutex
+	chunkInFlight             map[string]int
+	chunkMaxInFlight          map[string]int
+	chunkWorkers              map[string]map[int]struct{}
+	chunkFinalizeMu           sync.Mutex
+	chunkFinalizeRetries      map[string]int
+	chunkFinalizeFatalErr     error
+	maxChunkFinalizeRetries   int
+	db                        *sql.DB
+	ds                        *DownloadStatus // only the progress report thread accesses this field
+	timeOfLastError           int
+	maxChunkSize              int64
 	regularPartChunking       regularChunkingMode
 	regularPartSplitThreshold int64
-	maxInflightChunksPerFile int
+	maxInflightChunksPerFile  int
 }
 
 type regularChunkingMode int
@@ -299,26 +299,26 @@ func NewDxDa(dxEnv DXEnvironment, fname string, optsRaw Opts) *State {
 	//	runtime.GOMAXPROCS(st.opts.NumThreads + 2)
 
 	return &State{
-		dxEnv:           dxEnv,
-		opts:            opts,
-		mutex:           sync.Mutex{},
-		fileChunkSemMu:  sync.Mutex{},
-		fileChunkSem:    make(map[string]chan struct{}),
-		chunkStatsMu:    sync.Mutex{},
-		chunkInFlight:   make(map[string]int),
-		chunkMaxInFlight: make(map[string]int),
-		chunkWorkers:    make(map[string]map[int]struct{}),
-		chunkFinalizeMu: sync.Mutex{},
-		chunkFinalizeRetries: make(map[string]int),
-		chunkFinalizeFatalErr: nil,
-		maxChunkFinalizeRetries: 2,
-		db:              db,
-		ds:              nil,
-		timeOfLastError: 0,
-		maxChunkSize:    maxChunkSize,
+		dxEnv:                     dxEnv,
+		opts:                      opts,
+		mutex:                     sync.Mutex{},
+		fileChunkSemMu:            sync.Mutex{},
+		fileChunkSem:              make(map[string]chan struct{}),
+		chunkStatsMu:              sync.Mutex{},
+		chunkInFlight:             make(map[string]int),
+		chunkMaxInFlight:          make(map[string]int),
+		chunkWorkers:              make(map[string]map[int]struct{}),
+		chunkFinalizeMu:           sync.Mutex{},
+		chunkFinalizeRetries:      make(map[string]int),
+		chunkFinalizeFatalErr:     nil,
+		maxChunkFinalizeRetries:   2,
+		db:                        db,
+		ds:                        nil,
+		timeOfLastError:           0,
+		maxChunkSize:              maxChunkSize,
 		regularPartChunking:       regularPartChunking,
 		regularPartSplitThreshold: regularPartSplitThreshold,
-		maxInflightChunksPerFile: maxInflightChunksPerFile,
+		maxInflightChunksPerFile:  maxInflightChunksPerFile,
 	}
 }
 
@@ -481,101 +481,6 @@ func createChunkIndexes(db *sql.DB) error {
 	return nil
 }
 
-func migrateSchemaVersion(db *sql.DB) error {
-	hasRegularTable, err := tableExists(db, "manifest_regular_stats")
-	if err != nil {
-		return err
-	}
-	if !hasRegularTable {
-		return nil
-	}
-
-	if ok, err := hasColumn(db, "manifest_regular_stats", "checksum_type"); err != nil {
-		return err
-	} else if !ok {
-		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN checksum_type text"); err != nil {
-			return err
-		}
-		if _, err := db.Exec("UPDATE manifest_regular_stats SET checksum_type = '' WHERE checksum_type IS NULL"); err != nil {
-			return err
-		}
-	}
-
-	if ok, err := hasColumn(db, "manifest_regular_stats", "checksum"); err != nil {
-		return err
-	} else if !ok {
-		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN checksum text"); err != nil {
-			return err
-		}
-		if _, err := db.Exec("UPDATE manifest_regular_stats SET checksum = '' WHERE checksum IS NULL"); err != nil {
-			return err
-		}
-	}
-
-	if ok, err := hasColumn(db, "manifest_regular_stats", "split_mode"); err != nil {
-		return err
-	} else if !ok {
-		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN split_mode text"); err != nil {
-			return err
-		}
-		if _, err := db.Exec(fmt.Sprintf("UPDATE manifest_regular_stats SET split_mode = '%s' WHERE split_mode IS NULL OR split_mode = ''", splitModePartRow)); err != nil {
-			return err
-		}
-	}
-
-	if ok, err := hasColumn(db, "manifest_regular_stats", "integrity_done"); err != nil {
-		return err
-	} else if !ok {
-		if _, err := db.Exec("ALTER TABLE manifest_regular_stats ADD COLUMN integrity_done integer"); err != nil {
-			return err
-		}
-		if _, err := db.Exec("UPDATE manifest_regular_stats SET integrity_done = 0 WHERE integrity_done IS NULL"); err != nil {
-			return err
-		}
-	}
-
-	hasChunkTable, err := tableExists(db, "manifest_regular_chunk_stats")
-	if err != nil {
-		return err
-	}
-	if !hasChunkTable {
-		if _, err := db.Exec(`
-			CREATE TABLE manifest_regular_chunk_stats (
-				file_id text,
-				project text,
-				name text,
-				folder text,
-				part_id integer,
-				chunk_id integer,
-				offset integer,
-				size integer,
-				bytes_fetched integer,
-				download_done_time integer
-			)
-		`); err != nil {
-			return err
-		}
-	}
-
-	return createChunkIndexes(db)
-}
-
-func ensureSchemaCompatibility(db *sql.DB) error {
-	hasRegularTable, err := tableExists(db, "manifest_regular_stats")
-	if err != nil {
-		return err
-	}
-	if !hasRegularTable {
-		// New DB with no schema yet; compatibility check is not applicable.
-		return nil
-	}
-
-	if err := migrateSchemaVersion(db); err != nil {
-		return err
-	}
-	return checkSchemaVersion(db)
-}
-
 func checkSchemaVersion(db *sql.DB) error {
 	mandatoryColumns := []string{"checksum_type", "split_mode", "integrity_done"}
 	for _, colName := range mandatoryColumns {
@@ -602,7 +507,7 @@ func checkSchemaVersion(db *sql.DB) error {
 // CheckSchemaVersion verifies the database schema is compatible with current version.
 // Returns an error if the schema is outdated and requires recreation.
 func (st *State) CheckSchemaVersion() error {
-	return ensureSchemaCompatibility(st.db)
+	return checkSchemaVersion(st.db)
 }
 
 // Probably a better way to do this :)
@@ -1537,6 +1442,19 @@ func (st *State) countIncompleteJobs() int64 {
 	return cntReg + cntRegChunked + cntSlnk
 }
 
+// Persisted chunk rows are sized at DB creation; a smaller worker buffer now would overflow.
+func (st *State) checkPersistedChunkSizes() error {
+	maxPersisted := st.queryDBIntegerResult("SELECT MAX(size) FROM manifest_regular_chunk_stats WHERE bytes_fetched != size")
+	if s := st.queryDBIntegerResult("SELECT MAX(size) FROM manifest_symlink_stats WHERE bytes_fetched != size"); s > maxPersisted {
+		maxPersisted = s
+	}
+	if maxPersisted > st.maxChunkSize {
+		return fmt.Errorf("database has chunks of %d bytes but the current maximal chunk size is %d bytes (created in a different environment). Please delete the .stats.db file and re-run the download to recreate the manifest database",
+			maxPersisted, st.maxChunkSize)
+	}
+	return nil
+}
+
 // Download all the files that are mentioned in the manifest.
 func (st *State) DownloadManifestDB(fname string) {
 	if st.opts.Verbose {
@@ -1544,6 +1462,10 @@ func (st *State) DownloadManifestDB(fname string) {
 	}
 	st.timeOfLastError = time.Now().Second()
 	st.clearChunkFinalizeFatalErr()
+
+	if err := st.checkPersistedChunkSizes(); err != nil {
+		panic(err)
+	}
 
 	// The extra round lets the top-of-loop reconcile finalize parts completed in the last download round.
 	maxRounds := st.maxChunkFinalizeRetries + 3
